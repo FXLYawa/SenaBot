@@ -1,0 +1,60 @@
+# Local-only material (original specs and reference repositories)
+.local/
+
+# Python environments and caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.coverage
+.coverage.*
+htmlcov/
+
+# Packaging and generated artifacts
+build/
+dist/
+*.egg-info/
+*.whl
+*.tar.gz
+
+# Runtime state
+data/
+logs/
+tmp/
+cache/
+output/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+config.json
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.*
+
+# IDE and OS files
+.idea/
+.vscode/
+*.code-workspace
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local archives and reference downloads
+*.zip
+*.7z
+*.rar
