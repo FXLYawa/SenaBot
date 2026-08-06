@@ -1,288 +1,255 @@
 # Event 公开 API
 
-本文记录外部 Module 可以依赖的契约和行为。业务代码应从 `core.event` 导入公开对象，不访问 Registry 状态或 EventBus 私有方法。
+本文说明外部 Module 可以依赖的 Event 契约。业务代码应从 `core.event` 导入公开对象，不访问 EventBus 或 EventRegistry 的私有成员。
 
-## 1. 调用入口
+## 1. 应该使用哪个接口
 
-| 接口 | 使用者 | 用途 |
-|---|---|---|
-| `ModuleEventAPI` | 受信核心 Module | 注册事件、订阅 Handler、构造派生事件 |
-| `EventClient` | 输入 Adapter、业务入口 | 以绑定 owner 发布根事件 |
-| `EventBus` | 组合根 | 创建通信核心、执行 owner 清理 |
+| 接口 | 使用场景 |
+|---|---|
+| `ModuleEventAPI` | Module 注册事件、订阅 Handler，同时发布事件 |
+| `EventClient` | Adapter 或其他入口只需要发布事件 |
+| `EventFlow` | Handler 读取当前事件并描述后续动作 |
+| `EventBus` | 组合根管理启动、等待和关闭 |
+| `EventRegistry` | 使用新的注册表替换默认注册表；普通 Module 不直接使用 |
 
-普通 Module 不应直接使用 `EventRegistry` 或手工构造带有可信 source 的 `EventEnvelope`。
+`ModuleEventAPI` 继承 `EventClient`：它拥有 `publish()`、`emit()`，并额外提供 `register()`、`subscribe()`。
 
-## 2. 核心概念
+## 2. 基本概念
 
 ### owner
 
-owner 是稳定的 Module、Adapter 或扩展身份，例如 `memory`、`body`、`adapter.web`。它不是用户 ID、Session ID 或进程实例 ID。
+owner 表示一项 Event 能力属于哪个 Module、Adapter 或扩展，例如 `memory`、`body`、`adapter.web`。它不是用户 ID 或 Session ID。
 
-- 事件 owner 维护事件契约；
-- Handler owner 表示处理能力属于谁；
-- 根事件 source 由 `EventClient` 的 owner 决定；
-- 派生事件 source 由产生它的 Handler owner 决定；
-- `target_owner_id` 只筛选目标 Handler owner。
+Client 发布的根事件以 Client 绑定的 owner 作为来源；Handler 产生的派生事件以 Handler 所属 owner 作为来源。组合根也可以按 owner 批量注销注册。
 
 ### event_type
 
-事件名是开放字符串，推荐格式为：
+事件类型是开放字符串，推荐使用 `<domain>.<object>.<state-or-action>`，例如：
 
 ```text
-<domain>.<object>.<state-or-action>
+body.input.received
+memory.query.requested
+memory.query.completed
 ```
 
-例如 `body.input.received`、`memory.query.requested`。名称至少包含两个片段，每个片段只能使用字母、数字和下划线。
+名称至少包含两个片段，每个片段只能包含字母、数字和下划线。
 
-### Handler
+### 根事件、派生事件和 Handler
 
-Handler 是异步 callable，接收 `EventEnvelope`，必须返回 `EventHandlerResult`。
+Client 直接发布的是根事件，没有父事件。Handler 通过 `flow.emit()` 产生的是派生事件。它们拥有不同的 event ID，但共享 trace ID，并通过 parent event ID 记录直接父子关系。
 
-| 类型 | 用途 |
-|---|---|
-| `CONSUMER` | 承担业务处理责任 |
-| `OBSERVER` | 日志、指标、审计等旁路处理 |
-| `TRANSFORMER` | 在主处理前替换同一事件的 Payload |
+Handler 的签名固定为：
 
-## 3. 公开契约
+```python
+async def handle(flow: EventFlow) -> None:
+    ...
+```
 
-### `EventEnvelope`
+Handler 不返回分发结果。它读取事件、调用自己 Module 的业务实现，并通过 Flow 描述后续动作。
 
-Handler 接收到的事件信封：
-
-| 字段 | 类型 | 含义 |
-|---|---|---|
-| `event_id` | `str` | 当前事件唯一 ID |
-| `event_type` | `str` | 开放字符串事件名 |
-| `occurred_at` | `datetime` | 业务事实发生时间 |
-| `emitted_at` | `datetime` | 信封发出时间 |
-| `source_owner_id` | `str` | 可信发布身份 |
-| `target_owner_id` | `str \| None` | 可选目标 Handler owner |
-| `trace` | `TraceInfo` | 当前事件的追踪关系 |
-| `payload` | `object` | Event 不解释的业务数据 |
-| `metadata` | `Mapping[str, object]` | 通用诊断或附加信息 |
-
-信封不可重新赋值，metadata 会被复制为只读 Mapping；Payload 本身不会被深拷贝或递归冻结。
-
-### `EventHandlerResult`
-
-| 字段 | 类型 | 默认值 | 含义 |
-|---|---|---|---|
-| `handled` | `bool` | `True` | unicast Consumer 是否接受事件 |
-| `transform` | `EventTransform \| None` | `None` | 仅 Transformer 可以提供的 Payload 替换 |
-| `derived_events` | `list[EventPublishRequest]` | 空列表 | 请求 EventBus 后续发布的事件 |
-| `metadata` | `dict[str, object]` | 空字典 | 本次 Handler 的少量诊断信息 |
-| `error` | `EventError \| None` | `None` | Handler 主动返回的结构化错误 |
-
-### `EventDispatchResult`
-
-`publish()` 返回：
-
-| 字段 | 类型 | 含义 |
-|---|---|---|
-| `envelopes` | `list[EventEnvelope]` | 根事件和本次同步处理的派生事件 |
-| `handlers` | `list[HandlerExecutionResult]` | 每次 Handler 的执行记录 |
-| `errors` | `list[EventError]` | 校验、选择、执行和派生阶段的错误 |
-
-调用方必须检查 `errors`，并根据稳定的 `error.code` 处理，不要解析 `message`。
-
-### `HandlerExecutionResult`
-
-它是 `EventDispatchResult.handlers` 中的元素：
-
-| 字段 | 类型 | 含义 |
-|---|---|---|
-| `handler_id` | `str` | Handler 在 owner 内的稳定 ID |
-| `owner_id` | `str` | Handler 所属 owner |
-| `handled` | `bool` | Handler 返回的接受状态 |
-| `metadata` | `dict[str, object]` | Handler 返回的诊断信息 |
-| `error` | `EventError \| None` | 本次 Handler 的错误 |
-
-该类型已从 `core.event` 导出，字段属于稳定公开契约。外部代码可以导入它进行类型标注，并读取字段用于日志、测试和观测；通常不应主动构造或修改它，也不应根据具体 `handler_id` 编写业务流程。
+## 3. 公开结构
 
 ### `TraceInfo`
 
 | 字段 | 类型 | 默认值 | 含义 |
 |---|---|---|---|
-| `trace_id` | `str` | 必填 | 一条根事件及其派生链共享的追踪 ID |
+| `trace_id` | `str` | 必填 | 整条事件链共享的追踪 ID |
 | `parent_event_id` | `str \| None` | `None` | 直接父事件 ID；根事件为 `None` |
+
+### `EventEnvelope`
+
+EventEnvelope 是 Handler 收到的完整事件信封：
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `event_id` | `str` | 当前事件的唯一 ID |
+| `event_type` | `str` | 事件类型 |
+| `occurred_at` | `datetime` | 事件发生时间 |
+| `emitted_at` | `datetime` | 信封发出时间 |
+| `source_owner_id` | `str` | 产生该事件的 owner |
+| `trace` | `TraceInfo` | 事件链追踪关系 |
+| `payload` | `object` | Event 不解释的业务数据 |
+| `metadata` | `Mapping[str, object]` | 通用附加信息 |
+
+这些字段是稳定公开契约。信封不可重新赋值；metadata 会被浅复制为只读 Mapping，但 Payload 和 metadata 内部的对象不会被深度冻结。
+
+`with_payload(new_payload)` 返回仅替换 Payload 的新信封。业务 Handler 通常应使用 `flow.replace_payload()`，而不是直接调用它。
 
 ### `EventSpec`
 
-EventBus 的底层事件注册声明；Module 通常通过 `ModuleEventAPI.register()` 创建。
-
 | 字段 | 类型 | 默认值 | 含义 |
 |---|---|---|---|
-| `event_type` | `str` | 必填 | 事件名称 |
+| `event_type` | `str` | 必填 | 事件类型 |
 | `owner_id` | `str` | 必填 | 维护该事件契约的 owner |
-| `payload_type` | `type \| None` | `None` | 可选运行期 `isinstance` 校验类型 |
-| `mode` | `EventMode` | `BROADCAST` | broadcast 或 unicast |
+| `payload_type` | `type \| None` | `None` | 可选的运行期 `isinstance` 校验类型 |
+
+同一事件类型只能注册一次。`payload_type=None` 表示 Event 不检查 Payload 类型。
 
 ### `HandlerSpec`
-
-EventBus 的底层 Handler 声明；Module 通常通过 `ModuleEventAPI.subscribe()` 创建。
 
 | 字段 | 类型 | 默认值 | 含义 |
 |---|---|---|---|
 | `handler_id` | `str` | 必填 | owner 内唯一的 Handler ID |
 | `owner_id` | `str` | 必填 | Handler 所属 owner |
-| `event_pattern` | `str` | 必填 | exact、尾部 `.*` 或全局 `*` |
-| `priority` | `int` | `100` | 越小越先执行 |
-| `kind` | `HandlerKind` | `CONSUMER` | Handler 类型 |
-| `timeout` | `float \| None` | `None` | 单次调用超时秒数 |
-| `publish_patterns` | `tuple[str, ...]` | `()` | 允许产生的跨 owner 派生事件 pattern |
+| `event_pattern` | `str` | 必填 | 精确类型、尾部 `.*` 或全局 `*` |
+| `priority` | `int` | `100` | 越小越早进入分发流程 |
+| `timeout` | `float \| None` | `None` | 调用超时秒数；`None` 使用 Bus 默认值 |
+| `controls_flow` | `bool` | `False` | 是否可以修改 Payload 或停止后续传播 |
 
-### `EventPublishRequest`
+同一 owner 内的 `handler_id` 不能重复。
 
-| 字段 | 类型 | 默认值 | 含义 |
-|---|---|---|---|
-| `event_type` | `str` | 必填 | 要发布的派生事件类型 |
-| `payload` | `object` | 必填 | 派生事件 Payload |
-| `target_owner_id` | `str \| None` | `None` | 可选目标 Handler owner |
-| `metadata` | `dict[str, object]` | 空字典 | 覆盖或补充父事件 metadata |
-| `occurred_at` | `datetime \| None` | `None` | 业务发生时间；省略时由 EventBus 生成 |
+### `EventFlow`
 
-该请求不允许指定 source、event ID、emitted time 或 trace，这些字段由 EventBus 根据 Handler 身份和父事件补全。
+EventFlow 是 Handler 在本次调用中的操作入口，由 Bus 创建，外部代码不应自行构造。
 
-### `EventTransform`
+| 成员 | 含义 |
+|---|---|
+| `envelope` | 当前 Handler 看到的完整信封 |
+| `payload` | `envelope.payload` 的便捷访问 |
+| `emit(event_type, payload, *, metadata=None)` | 产生一条派生事件 |
+| `replace_payload(new_payload)` | 替换后续 Handler 看到的 Payload |
+| `stop_propagation()` | 阻止尚未启动的后续 Handler |
 
-| 字段 | 类型 | 含义 |
-|---|---|---|
-| `payload` | `object` | 替换当前信封的 Payload |
+所有 Handler 都可以调用 `emit()`。后两个方法只有注册了 `controls_flow=True` 的 Handler 才能使用。
 
-`EventTransform.with_changes(payload, **changes)` 可以浅复制 dataclass 或 Mapping 并修改指定字段。其他 Payload 类型会抛出 `TypeError`。
+Flow 中的动作先暂存：Handler 正常返回时一起提交，超时、异常或取消时全部丢弃。Handler 返回后 Flow 失效；后台任务应保存父信封并使用 `EventClient.emit()`。
 
 ### `EventError`
 
-| 字段 | 类型 | 默认值 | 含义 |
-|---|---|---|---|
-| `code` | `str` | 必填 | 稳定、供程序判断的错误码 |
-| `message` | `str` | 必填 | 面向开发者的简短说明 |
-| `details` | `dict[str, object]` | 空字典 | 不含敏感数据的诊断信息 |
-| `retryable` | `bool` | `False` | 是否允许调用方重试 |
+`EventError` 继承 `ValueError`，公开字段为：
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `code` | `str` | 稳定、供程序判断的错误码 |
+| `message` | `str` | 面向开发者的说明 |
+| `details` | `dict[str, object]` | 诊断信息 |
+
+程序应判断 `code`，不要解析异常字符串。
 
 ### `RegistrationToken`
 
-| 成员 | 类型 | 含义 |
-|---|---|---|
-| `registration_id` | `str` | 当前事件定义或 Handler 注册的 ID |
-| `owner_id` | `str` | 注册所属 owner |
-| `active` | `bool` | 注册当前是否有效 |
-| `await unregister()` | 方法 | 幂等地注销当前注册 |
+| 成员 | 含义 |
+|---|---|
+| `registration_id` | 当前注册的唯一 ID |
+| `owner_id` | 注册所属 owner |
+| `await unregister()` | 注销对应的事件定义或 Handler |
 
-`active` 用于观察状态，不应手工修改。Token 内部持有的注销回调不是公开接口，外部代码不应访问或替换。
+重复注销不会报错。Token 内部的注销回调不是公开接口。
 
-## 4. 注册和发布
+## 4. 注册与发布
 
-### 创建 Module API
-
-```python
-events = ModuleEventAPI.create(bus, "memory")
-```
-
-owner 创建后固定用于注册和发布身份。当前 `ModuleEventAPI` 面向受信核心 Module，不能直接暴露给第三方插件。
-
-### 注册事件
+### Module 注册
 
 ```python
-token = events.register(
-    "memory.query.requested",
-    payload_type=MemoryQueryRequest,
-    mode=EventMode.UNICAST,
+events = ModuleEventAPI(bus, "example")
+
+event_token = events.register(
+    "example.operation.requested",
+    payload_type=ExampleRequest,
 )
-```
 
-一个 `event_type` 只能有一个 owner。`payload_type=None` 表示不进行运行期类型检查。
-
-### 注册 Handler
-
-```python
-token = events.subscribe(
-    "memory.query.requested",
-    handle_query,
-    handler_id="memory.query",
+handler_token = events.subscribe(
+    "example.operation.requested",
+    handle_request,
+    handler_id="example.execute",
     priority=100,
-    kind=HandlerKind.CONSUMER,
     timeout=10.0,
+    controls_flow=False,
 )
 ```
 
-pattern 支持精确事件名、尾部通配 `memory.*` 和全局通配 `*`。priority 越小越先执行；同 priority 按注册顺序执行。
-
-当前 `ModuleEventAPI.subscribe()` 的 `publish_patterns` 参数尚未用于权限收缩，核心 Handler 实际使用 `("*",)`。不要依赖该参数实现插件权限隔离。
+ModuleEventAPI 自动把绑定 owner 写入 EventSpec 和 HandlerSpec。
 
 ### 发布根事件
 
 ```python
-result = await client.publish(
-    "body.input.received",
-    payload,
-    target_owner_id="body",
+client = EventClient(bus, "adapter.web")
+
+await client.publish(
+    "example.operation.requested",
+    ExampleRequest("hello"),
     metadata={"channel": "web"},
 )
 ```
 
-`EventClient` 自动生成 event ID、trace、时间和 source。Client 可以发布自己拥有的事件，或 `publish_patterns` 明确允许的事件；越权时抛出 `EventPermissionError`。
+Client 自动生成 ID、UTC 时间、trace 和 source。`metadata` 是仅限关键字参数。
 
-### 构造派生事件
+`publish()` 在校验并入队后返回 `None`，不等待 Handler，也不返回业务结果。测试或批处理需要等待整个队列及派生事件时使用：
 
 ```python
-return EventHandlerResult(
-    derived_events=[
-        events.derived(
-            "memory.query.completed",
-            completed,
-            target_owner_id=envelope.source_owner_id,
-        )
-    ]
+await bus.wait_idle()
+```
+
+### 在后台延续事件链
+
+```python
+await client.emit(
+    parent_envelope,
+    "example.operation.completed",
+    completed,
+    metadata={"worker": "background"},
 )
 ```
 
-Handler 不直接递归调用 `publish()`。EventBus 为派生事件生成新 ID，使用 Handler owner 作为 source，继承 trace，并记录父 event ID。
+`emit()` 继承父事件的 trace 和 metadata，并记录父 event ID。它是独立发布，不属于原 Handler 的提交过程。
 
-## 5. 分发规则
+### Bus 管理
 
-一次事件按以下顺序处理：
+| 方法 | 用途 |
+|---|---|
+| `await start()` | 启动事件 worker |
+| `await wait_idle()` | 等待队列和处理过程中产生的派生事件完成 |
+| `await stop()` | 拒绝新事件，排空队列并停止 worker |
+| `await unregister_owner(owner_id)` | 注销一个 owner 的全部事件定义和 Handler |
+| `register(spec)`、`subscribe(spec, handler)` | ModuleEventAPI 使用的低层注册入口 |
+| `await publish(envelope)` | EventClient 使用的低层信封入口 |
+
+EventBus 默认创建 EventRegistry；如果需要替换注册表时可通过构造函数注入。普通 Module 使用 ModuleEventAPI 和 EventClient 即可。EventBus 只在组合根中直接创建和管理。
+
+## 5. 匹配与分发
+
+事件必须先注册才能发布。订阅 pattern 支持：
 
 ```text
-校验 -> 匹配并排序 -> Transformer -> target 过滤
-     -> Consumer -> Observer -> 派生事件
+body.input.received   # 精确匹配
+body.*                # 命名空间匹配
+*                     # 全部事件
 ```
 
-- `broadcast`：执行全部 Consumer，再执行全部 Observer；
-- `unicast`：首个无错误且 `handled=True` 的 Consumer 接受事件，随后仍执行 Observer；
-- 所有 Consumer 都未接受 unicast 时返回 `handler_not_found`；
-- 单个 Handler 超时或异常会被隔离，后续 Handler 继续执行；
-- 派生事件使用 FIFO 队列，按广度优先顺序处理；
-- Transformer 只能精确订阅已注册事件，并且只能替换 Payload。
+匹配结果按 priority 和注册顺序排列。普通 Handler 可以并发，因此 priority 只保证发布顺序，不保证完成顺序。
 
-## 6. 错误
+| Handler | 执行方式 | 能力 |
+|---|---|---|
+| `controls_flow=False` | 创建独立任务，可与其他普通 Handler 并发 | 读取事件、产生派生事件 |
+| `controls_flow=True` | Bus 等待其完成后继续 | 还可以替换 Payload、停止后续传播 |
 
-分发期错误写入 `EventDispatchResult.errors`：
+流控制 Handler 的修改只影响尚未启动的后续 Handler；已经启动的普通 Handler 不会被取消，并继续使用启动时的信封。流控制 Handler 失败时，其修改被丢弃，Bus 使用原信封继续分发。
 
-| code | 含义 |
+派生事件使用 Handler owner 作为 source，继承父 trace 和 metadata，并以自身 metadata 覆盖同名键。没有匹配 Handler 时，事件直接完成。
+
+## 6. 错误与生命周期
+
+| code | 场景 |
 |---|---|
-| `event_not_registered` | 事件没有注册 |
-| `payload_invalid` | Payload 类型不符合 EventSpec |
-| `handler_not_found` | 没有匹配或接受事件的 Handler |
-| `handler_timeout` | Handler 超时 |
-| `handler_failed` | Handler 异常或返回值非法 |
-| `permission_denied` | 发布或 transform 操作越权 |
+| `registration_conflict` | 重复注册，或事件名/pattern 非法 |
+| `event_bus_unavailable` | Bus 未运行或正在关闭 |
+| `event_not_registered` | 发布未注册事件 |
+| `payload_invalid` | Payload 不符合 `payload_type` |
 
-注册冲突抛出 `EventRegistrationError`，其结构化错误码为 `registration_conflict`；Client 发布越权抛出 `EventPermissionError`，非法信封构造抛出 `ValueError`。前两个异常都通过 `.error` 暴露对应的 `EventError`。`retryable=True` 只表示允许调用方重试，EventBus 不会自动重试。
+注册和发布边界错误直接抛出。Handler 超时或异常由 Bus 记录并隔离，不返回给发布者，也不会自动重试。
 
-## 7. 注销
+Bus 的基本生命周期：
 
-事件注册和 Handler 注册都会返回 `RegistrationToken`：
-
-```python
-await token.unregister()
+```text
+创建并注册 -> start -> 发布事件 -> stop
 ```
 
-注销是幂等的。Module 停止时通常由组合根统一清理：
+`stop()` 先拒绝新事件，再等待已有事件处理；超过 `shutdown_timeout` 后取消 worker 并丢弃剩余队列。注册不会随 Bus 停止自动清空，可通过 Token 或 `unregister_owner(owner_id)` 注销。
 
-```python
-await bus.unregister_owner("memory")
-```
+组合根需要直接创建 Bus 时，可配置 `dispatch_concurrency`、普通/流控制 Handler 默认超时、关闭超时、Registry 和 Logger。普通 Module 不应直接构造信封调用 `bus.publish()`。
 
-owner 清理会移除该 owner 的事件定义、Handler 和相关 callable 引用。
+## 7. 当前限制
+
+当前没有 target、广播/单播、请求结果汇总、自动重试、持久化、跨进程 Transport 或插件权限沙箱。
+
+完整接入示例见 [Module 接入指南](integration-guide.md)。
