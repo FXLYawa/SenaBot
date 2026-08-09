@@ -26,22 +26,12 @@ async def publish_body_input(
     payload = await runtime.handle_adapter_input(message)
     if payload is None:
         return None
-    await events.publish(
-        "body.input.received",
-        payload,
-        metadata={
-            "body_route": {
-                "adapter_type": message.adapter_type,
-                "platform": message.platform,
-                "body_id": message.body_id,
-            }
-        },
-    )
+    await events.publish("body.input.received", payload)
     return payload
 
 
-def register_body_events(events: ModuleEventAPI, runtime: BodyRuntime) -> None:
-    """声明 Body 拥有的公开输入事件和受限输出命令。"""
+def register_body_events(events: ModuleEventAPI) -> None:
+    """声明 Body 拥有的事件定义（公共契约，不依赖 runtime）。"""
 
     # 输入事件：Context 是 consumer，插件可以作为 observer 旁路观察。
     events.register("body.input.received", payload_type=BodyInputEventData)
@@ -53,8 +43,13 @@ def register_body_events(events: ModuleEventAPI, runtime: BodyRuntime) -> None:
     ):
         events.register(event_type, payload_type=BodyOutputResultEventData)
 
+
+def subscribe_body_events(events: ModuleEventAPI, runtime: BodyRuntime) -> None:
+    """Body 的 Handler 接线（内部实现，依赖 runtime）。"""
+
     async def handle_output(flow: EventFlow) -> None:
-        # Adapter 路由由 BodyOutputRequestData 字段携带，Event 核心不解释业务 Payload。
+        """执行输出请求，并按结果 outcome 分发对应的完成/失败事件。"""
+        # 会话路由由 Body 内部解析，Event 核心不解释业务 Payload。
         result = await runtime.handle_output_request(flow.payload)
         flow.emit(f"body.output.{result.outcome}", result)
 

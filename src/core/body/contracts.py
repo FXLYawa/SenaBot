@@ -7,11 +7,12 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from core.common.contracts import ErrorInfo, OperationStatus
-from core.common.types import UserRole
+from core.body.common import ErrorInfo, OperationStatus, UserRole
 
 
 class SceneType(StrEnum):
+    """Body 输入可出现的会话场景类型，例如私有、群聊、桌面、系统。"""
+
     PRIVATE = "private"
     GROUP = "group"
     CHANNEL = "channel"
@@ -20,6 +21,8 @@ class SceneType(StrEnum):
 
 
 class ContentType(StrEnum):
+    """消息内容片段的类型枚举，例如文本、图片、音频、视频、文件、互动、混合类型。"""
+
     TEXT = "text"
     IMAGE = "image"
     AUDIO = "audio"
@@ -38,35 +41,43 @@ class SourceInfo:
     两者保持一致；映射引入后再由 BodyRuntime 填充不同的 principal_id。
     """
 
-    platform_user_id: str
+    platform_user_id: str  # 平台作用域用户 ID；上层身份判定请用 user_id 属性
     display_name: str
-    principal_id: str | None = None
+    principal_id: str | None = None  # 规范化主体 ID；引入身份映射后与 platform_user_id 分叉
     role: UserRole = UserRole.PRIVATE_USER
 
     @property
     def user_id(self) -> str:
+        """返回用于身份判定的规范化用户 ID（优先 principal_id）。"""
         return self.principal_id or self.platform_user_id
 
 
 @dataclass(frozen=True, slots=True)
 class SceneInfo:
+    """消息所属的会话场景（类型与场景 ID）。"""
+
     scene_type: SceneType
-    scene_id: str
+    scene_id: str  # 平台作用域场景 ID；与 adapter_type/platform 组合才全局唯一
 
 
 @dataclass(frozen=True, slots=True)
 class ContentSegment:
+    """消息内容片段：类型与其对应的结构化数据。"""
+
     type: ContentType
-    data: dict[str, Any]
+    data: dict[str, Any]  # 片段结构化数据，键依 type 而定（如文本片段为 {"text": ...}）
 
 
 @dataclass(frozen=True, slots=True)
 class Content:
+    """统一的消息内容模型，支持纯文本与多类型片段。"""
+
     content_type: ContentType = ContentType.TEXT
-    text: str | None = None
-    segments: tuple[ContentSegment, ...] = ()
+    text: str | None = None  # 纯文本摘要；未显式传入时由 segments 补全
+    segments: tuple[ContentSegment, ...] = ()  # 结构化片段；非空时优先于 text
 
     def __post_init__(self) -> None:
+        """补全纯文本摘要；片段含多种类型时把 content_type 修正为 MIXED。"""
         if self.text is None:
             value = "\n".join(
                 str(segment.data.get("text", ""))
@@ -79,6 +90,7 @@ class Content:
 
     @classmethod
     def from_text(cls, value: str) -> Content:
+        """用纯文本快速构造 Content，并同步生成文本摘要片段。"""
         return cls(
             ContentType.TEXT,
             value,
@@ -86,6 +98,7 @@ class Content:
         )
 
     def text_value(self) -> str:
+        """返回去除首尾空白的纯文本内容。"""
         return (self.text or "").strip()
 
 
@@ -97,79 +110,89 @@ class AdapterInboundMessage:
     Body 的角色判定（owner/群成员/私聊用户）直接信任该字段。
     """
 
-    adapter_type: str
-    platform: str
-    body_id: str
-    message_id: str
-    user_id: str
+    adapter_type: str  # Adapter 实现标识，与 platform 共同构成 AdapterRegistry 注册键
+    platform: str  # 平台名称，与 adapter_type 共同构成注册键
+    message_id: str  # 平台消息 ID，用于输入去重
+    user_id: str  # Adapter 已解析完成的规范用户 ID，Body 直接信任
     display_name: str
     scene_type: SceneType
-    scene_id: str
+    scene_id: str  # 平台作用域场景 ID，Body 据此绑定会话
     content: Content
-    reply_to_message_id: str | None = None
+    reply_to_message_id: str | None = None  # 本条入站消息回复的平台消息 ID，MVP 暂不参与路由
 
 
 @dataclass(slots=True)
 class BodyInputEventData:
-    """发布给 Context/Agent 的标准输入契约；时间与事件元数据由 Envelope 承载。"""
+    """发布给 Context/Agent 的标准输入契约；时间与事件元数据由 Envelope 承载。
 
-    body_id: str
-    adapter_type: str
-    platform: str
-    platform_message_id: str | None
-    source: SourceInfo
-    scene: SceneInfo
+    公共契约不暴露平台标识，session_id 是唯一寻址句柄。
+    """
+
+    session_id: str  # Body 内部维护的不透明会话句柄；同一会话的后续消息复用同一 id
+    source: SourceInfo  # 归一化发言者；身份判定请用 source.user_id
+    scene: SceneInfo  # 会话场景，仅供语义判断（私聊/群聊/哪个群），不用于寻址
     content: Content
-    reply_to_message_id: str | None = None
     payload_type: str = "body"
     body_data_type: str = "input"
 
 
-@dataclass(frozen=True, slots=True)
-class OutputReplyInfo:
-    platform_event_id: str
-
-
 @dataclass(slots=True)
 class BodyOutputRequestData:
-    output_id: str
-    scene: SceneInfo
+    """Body 模块的输出请求契约；寻址只依赖 session_id，路由由 Body 内部解析。"""
+
+    output_id: str  # 输出幂等键：同一 output_id 重复请求直接返回缓存结果
+    session_id: str  # 目标会话句柄，来自 BodyInputEventData 或 BodyRuntime.open_session()
     content: Content
-    # 路由信息由 Payload 字段携带；事件层在发布前填充，空值表示未完成路由。
-    adapter_type: str = ""
-    platform: str = ""
-    reply_to: OutputReplyInfo | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)  # 展示/附加元数据，如 presentation.emotion/state
     payload_type: str = "body"
     body_data_type: str = "output_request"
 
     @property
     def emotion(self) -> str:
+        """读取展示元数据中的情绪，缺省为 neutral。"""
         return str(self.metadata.get("presentation", {}).get("emotion", "neutral"))
 
     @property
     def state(self) -> str:
+        """读取展示元数据中的状态，缺省为 idle。"""
         return str(self.metadata.get("presentation", {}).get("state", "idle"))
 
 
 @dataclass(slots=True)
+class AdapterOutboundMessage:
+    """Body 私有的出站消息；由 BodyRuntime 解析会话路由后填充，平台具体。"""
+
+    adapter_type: str  # Adapter 实现标识，与 platform 共同构成注册键
+    platform: str  # 平台名称
+    scene: SceneInfo  # 从会话路由解析出的平台作用域场景
+    content: Content
+    reply_to_message_id: str | None = None  # 默认回复该会话最近一条入站消息；None 表示普通发送
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class BodyOutputItemResult:
-    index: int
+    """单个发送项的发送结果（索引、状态、平台事件 ID 与时间）。"""
+
+    index: int  # 发送项序号（内容拆分后的第几项）
     status: OperationStatus
-    platform_event_id: str | None = None
+    platform_event_id: str | None = None  # 平台消息 ID，用于发送结果追溯
     sent_at: datetime | None = None
 
 
 @dataclass(slots=True)
 class BodyOutputResultEventData:
+    """一次输出请求的整体结果事件，可携带汇总错误。"""
+
     output_id: str
-    items: list[BodyOutputItemResult]
-    error: ErrorInfo | None = None
+    items: list[BodyOutputItemResult]  # 逐项发送结果
+    error: ErrorInfo | None = None  # 汇总错误；None 表示至少有一项发送成功
     payload_type: str = "body"
     body_data_type: str = "output_result"
 
     @property
     def outcome(self) -> OperationStatus:
+        """按逐项发送结果汇总整体状态：全部成功/部分成功/失败。"""
         completed = sum(item.status == OperationStatus.COMPLETED for item in self.items)
         if completed == len(self.items) and self.items:
             return OperationStatus.COMPLETED
