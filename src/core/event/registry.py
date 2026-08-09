@@ -10,12 +10,6 @@ from core.event.patterns import event_pattern_matches
 from core.event.protocols import EventHandler
 
 
-async def _noop() -> None:
-    """为 dataclass 提供无副作用的默认回调"""
-
-    return
-
-
 @dataclass(frozen=True, slots=True)
 class RegistrationToken:
     """调用方持有的注册凭据"""

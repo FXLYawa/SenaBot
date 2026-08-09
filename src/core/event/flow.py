@@ -78,7 +78,7 @@ class EventFlow:
         *,
         metadata: Mapping[str, object] | None = None,
     ) -> None:
-        """在同一条事件链上发布派生事件"""
+        """在同一条事件链上发布派生事件, 所有事件会在Flow被提交后统一发布"""
         
         self._require_active()
         self._derived.append(

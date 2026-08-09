@@ -60,6 +60,7 @@ class EventBus:
     
     
     async def start(self) -> None:
+        """启动事件 worker"""
         
         if self._state is _BusState.RUNNING:
             return
@@ -80,6 +81,8 @@ class EventBus:
 
 
     async def stop(self) -> None:
+        """拒绝新事件，排空队列并停止 worker"""
+        
         if self._state is _BusState.STOPPED:
             return
         shutdown_task = self._shutdown_task
@@ -89,12 +92,9 @@ class EventBus:
             self._shutdown_task = shutdown_task
         await asyncio.shield(shutdown_task)
     
-    async def wait_idle(self) -> None:
-        
-        await self._queue.join()
-    
     
     async def publish(self, envelope: EventEnvelope) -> None:
+        """发布事件"""
         
         if self._state is not _BusState.RUNNING:
             raise EventError(
@@ -114,7 +114,7 @@ class EventBus:
     async def _drain_and_stop(self) -> None:
         """关闭入口但继续处理现有事件"""
         try:
-            await asyncio.wait_for(self.wait_idle(), timeout=self.shutdown_timeout)
+            await asyncio.wait_for(self._queue.join(), timeout=self.shutdown_timeout)
         except TimeoutError:
             self.logger.warning(
                 "EventBus shutdown timed out after %.1f seconds",
@@ -141,6 +141,7 @@ class EventBus:
     
     
     async def _run_worker(self) -> None:
+        """事件分发 worker"""
         while True:
             envelope = await self._queue.get()
             try:
@@ -152,6 +153,7 @@ class EventBus:
     
     
     async def _dispatch_one(self, envelope: EventEnvelope) -> None:
+        """分发单个事件"""
         
         event_spec = self._validate_envelope(envelope)
         registrations = self.registry.matching_handlers(envelope.event_type)
@@ -185,6 +187,7 @@ class EventBus:
         envelope: EventEnvelope,
         event_spec: EventSpec,
     ) -> None:
+        """运行单个事件处理器"""
         
         flow = self._new_flow(envelope, registration, event_spec)
         committed = await self._invoke(registration, flow)
@@ -198,6 +201,8 @@ class EventBus:
         registration: HandlerRegistration,
         event_spec: EventSpec,
     ) -> EventFlow:
+        """创建一个新的事件流"""
+        
         return EventFlow(
             envelope,
             lambda payload: self._validate_payload(event_spec, payload),
@@ -302,6 +307,8 @@ class EventBus:
         *,
         source_owner_id: str,
     ) -> EventEnvelope:
+        """创建派生事件"""
+        
         spec = self.registry.event_spec(event_type)
         if spec is None:
             raise EventError(
