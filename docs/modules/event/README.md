@@ -39,7 +39,7 @@ Event 不解释 Payload 或执行任意的业务逻辑
 - Handler 只调用自己 Module 的模块；
 - 跨 Module 操作通过事件表达；
 - 业务代码只从 `core.event` 导入公开对象；
-- 使用绑定 owner 的 Client 发布；
+- 使用绑定 owner 的 Client 发布，调用方不应自行填充owner字段；
 - Module 卸载时注销它拥有的事件定义和 Handler。
 
 ## 文档导航

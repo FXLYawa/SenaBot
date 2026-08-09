@@ -174,11 +174,8 @@ await client.publish(
 
 Client 自动生成 ID、UTC 时间、trace 和 source。`metadata` 是仅限关键字参数。
 
-`publish()` 在校验并入队后返回 `None`，不等待 Handler，也不返回业务结果。测试或批处理需要等待整个队列及派生事件时使用：
+`publish()` 在校验并入队后返回 `None`，不等待 Handler，也不返回业务结果。
 
-```python
-await bus.wait_idle()
-```
 
 ### 在后台延续事件链
 
@@ -198,7 +195,6 @@ await client.emit(
 | 方法 | 用途 |
 |---|---|
 | `await start()` | 启动事件 worker |
-| `await wait_idle()` | 等待队列和处理过程中产生的派生事件完成 |
 | `await stop()` | 拒绝新事件，排空队列并停止 worker |
 | `await unregister_owner(owner_id)` | 注销一个 owner 的全部事件定义和 Handler |
 | `register(spec)`、`subscribe(spec, handler)` | ModuleEventAPI 使用的低层注册入口 |

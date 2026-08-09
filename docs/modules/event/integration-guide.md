@@ -121,13 +121,7 @@ await web_events.publish(
 
 Client 会填写 source、ID、时间和 trace。不要手工构造这些可信字段。
 
-`publish()` 表示“事件已经校验并进入队列”，不表示业务处理已经完成，也不返回 Handler 结果。测试或批处理需要等待整个队列时：
-
-```python
-await bus.wait_idle()
-```
-
-不要把 `wait_idle()` 当作单个线上请求的响应接口；同步响应应由业务协议单独设计。
+`publish()` 表示“事件已经校验并进入队列”，不表示业务处理已经完成，也不返回 Handler 结果。
 
 ## 6. 只在必要时控制事件流
 
