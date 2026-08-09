@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from core.common.types import new_id, utc_now
+from core.event.common import new_id, utc_now
 from core.event.bus import EventBus
 from core.event.contracts import EventSpec, HandlerSpec
 from core.event.envelope import EventEnvelope, TraceInfo

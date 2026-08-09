@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
-from core.common.types import new_id
+from core.event.common import new_id
 from core.event.contracts import EventSpec, HandlerSpec
 from core.event.errors import EventError
 from core.event.patterns import event_pattern_matches

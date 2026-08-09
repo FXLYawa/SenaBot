@@ -5,7 +5,7 @@ import logging
 from collections.abc import Mapping
 from enum import Enum, auto
 
-from core.common.types import new_id, utc_now
+from core.event.common import new_id, utc_now
 from core.event.contracts import EventSpec, HandlerSpec
 from core.event.envelope import EventEnvelope, TraceInfo
 from core.event.errors import EventError
