@@ -1,434 +1,316 @@
 # Event 核心开发指南
 
-本文面向维护 `core.event` 的开发者，解释当前实现的内部结构、调用链、状态不变量和修改方式。业务 Module 如何接入 Event，请阅读[公开开发文档](../../../docs/modules/event/README.md)。
+本文面向维护 `core.event` 的开发者，帮助开发者快速建立源码模型，并明确修改时不能破坏的行为。业务 Module 的接入方式见[外部开发文档](../../../docs/modules/event/README.md)。
 
-## 1. 先建立整体认识
+## 1. 架构概览
 
-Event 是业务无关的进程内通信核心。它接收通用事件信封，根据运行时注册信息查找 Handler，隔离执行失败，维护追踪关系，并同步处理 Handler 产生的派生事件。
+Event 是业务无关的进程内异步通信核心：Client 负责构造事件，Registry 保存动态注册，Bus 负责队列和分发，Flow 隔离单次 Handler 调用产生的操作。
 
 ```mermaid
 flowchart LR
-    Client["EventClient\n绑定发布身份"] --> Bus["EventBus\n执行分发"]
-    ModuleAPI["ModuleEventAPI\n核心 Module 门面"] --> Client
-    ModuleAPI --> Bus
-    Bus <--> Registry["EventRegistry\n保存注册事实"]
-    Registry --> Handler["Handler callable"]
-    Handler --> Result["EventHandlerResult"]
-    Result --> Bus
+    ModuleAPI["ModuleEventAPI\n注册便捷门面"] -.->|"继承"| Client["EventClient\n构造事件信封"]
+    Client -->|"发布"| Bus["EventBus\n排队与分发"]
+    ModuleAPI -->|"注册事件和 Handler"| Bus
+    Bus <-->|"保存 / 查询"| Registry["EventRegistry\n动态注册表"]
+    Bus -->|"创建 Flow 并调用"| Handler["Handler"]
+    Handler -->|"产生后续事件"| Bus
 ```
 
-第一次阅读代码时，建议按以下顺序：
+主要对象之间的关系：
 
-1. `contracts.py`：理解系统处理的数据；
-2. `registry.py`：理解事件和 Handler 如何被保存、匹配和注销；
-3. `bus.py`：理解一次 publish 的执行流程；
-4. `client.py`：理解 source 身份和发布权限如何建立；
-5. `patterns.py`、`errors.py`、`protocols.py`：补充通用规则。
+- `EventClient` 绑定 owner（Module 或 Adapter 的稳定身份），并补齐 ID、时间和 trace；
+- `ModuleEventAPI` 继承 EventClient，增加 register/subscribe；
+- `EventRegistry` 保存 EventSpec、HandlerSpec 和 Handler 函数；
+- `EventBus` 管理生命周期、队列、匹配和调用；
+- `EventFlow` 暂存 Handler 的 Payload 修改、停止标记和派生事件。
 
-## 2. 必须保持的边界
+运行时调用链是：Client 发布 → Bus 校验并入队 → worker 查询 Registry → Bus 创建 Flow 并调用 Handler → Handler 正常结束后提交 Flow。
 
-Event 核心只负责：
+推荐阅读顺序：`envelope.py`、`contracts.py` → `registry.py` → `flow.py` → `bus.py` → `client.py`。后续章节也按这个顺序解释源码。
 
-- 信封基础校验和可选 Payload 类型校验；
-- EventSpec、HandlerSpec 和 callable 的动态注册；
-- Handler 匹配、排序、调用和失败隔离；
-- target、broadcast、unicast 和 Transformer 语义；
-- 根事件与派生事件的追踪；
-- 分发结果、错误和注册生命周期。
+## 2. 边界和文件职责
 
-Event 核心不得：
+Event 只处理通用通信：信封校验、动态注册、Handler 分发、基础超时、异常隔离、事件追踪和队列生命周期。
 
-- 导入 Body、Context、Agent、Memory、Data、Tool 或插件实现；
-- 根据具体 `event_type` 编写路由分支；
-- 解释 Payload 的业务字段；
-- 判断 Session、用户或具体业务权限；
-- 持有业务 Runtime、Manager 或 Repository；
-- 因新增业务事件或 Handler 修改 EventBus。
+Event 不得导入业务 Module，不解释 Payload，不做其他任何业务直接相关实现。理论上，增加新的业务不应该对 Event 做出修改。
 
-如果新需求要求 EventBus 认识某个业务名称，应优先把规则表达为事件契约、Handler 注册信息、Payload 或 Event 之外的宿主 Adapter。
+| 文件 | 职责 |
+|---|---|
+| `envelope.py` | `TraceInfo`、`EventEnvelope` 和只读 metadata |
+| `contracts.py` | `EventSpec`、`HandlerSpec` |
+| `registry.py`、`patterns.py` | 注册、匹配、排序和注销 |
+| `flow.py` | Handler 操作的暂存、提交与丢弃 |
+| `bus.py` | 状态机、队列、分发和派生事件 |
+| `client.py` | 信封构造和 Module 门面 |
+| `errors.py`、`protocols.py` | 错误、Handler 和 Logger 协议 |
+| `__init__.py` | `core.event` 的公开导出 |
 
-## 3. 文件职责
+必须保持的不变量：
 
-| 文件 | 核心职责 | 修改时关注 |
-|---|---|---|
-| `contracts.py` | 信封、注册声明、Handler 结果和分发结果 | 字段变更会影响所有调用者 |
-| `registry.py` | 注册状态、索引、匹配、排序和注销 | 索引一致性与 callable 引用释放 |
-| `bus.py` | 校验、Handler 执行、派生事件和结果汇总 | 外部可观察的分发语义 |
-| `client.py` | owner 绑定、根信封构造和发布授权 | source 可信度与权限一致性 |
-| `patterns.py` | exact、尾部通配和全局通配 | 注册匹配与发布授权共同使用 |
-| `errors.py` | 结构化错误和边界异常 | 错误脱敏与稳定错误码 |
-| `protocols.py` | Handler 与 Logger Protocol | 避免依赖具体基础设施实现 |
-| `__init__.py` | Event 的公开导出 | 新公开对象必须显式加入 `__all__` |
+- 一个 event type 只有一个 EventSpec；
+- 同一 owner 内 Handler ID 唯一；
+- source 由 Client 或产生派生事件的 Handler owner 决定；
+- Handler 失败不能提交 Flow，也不能终止 worker；
+- 派生事件继承 trace，并记录直接父事件；
+- Registry、Bus、Flow 和 Client 不承担业务逻辑。
 
-职责划分的关键是：Registry 保存事实，Bus 执行流程，Client 建立调用身份。不要把三者合并成一个包含业务判断的集中式路由器。
+## 3. 数据与注册
 
-## 4. 核心数据结构
+公开字段见[公开 API](../../../docs/modules/event/public-api.md)。内部实现需要注意：EventEnvelope 只是浅不可变，Payload 和 metadata 内部对象不会被深拷贝；`with_payload()` 创建新信封，但复用其他字段。
 
-### EventEnvelope
+EventSpec 定义合法事件和可选 Payload 类型，类型校验仅使用 `isinstance`。HandlerSpec 定义匹配 pattern、priority、timeout 和 controls_flow。
 
-`EventEnvelope` 是 EventBus 的输入单位，使用 frozen dataclass：
-
-- `event_id`：当前事件唯一 ID；
-- `event_type`：开放字符串事件名；
-- `occurred_at` / `emitted_at`：业务发生时间和发出时间；
-- `source_owner_id` / `target_owner_id`：发布身份和可选目标；
-- `trace`：trace ID 与直接父事件 ID；
-- `payload`：Event 不解释的业务对象；
-- `metadata`：通用附加信息。
-
-`__post_init__()` 校验必要 ID，并把 metadata 浅复制为 `MappingProxyType`。这只保证信封字段和 metadata 映射不能直接修改，不会深冻结 Payload 或 metadata 内部的可变对象。
-
-### EventSpec 与 HandlerSpec
-
-`EventSpec` 描述事件 owner、可选 Payload 类型和分发模式。Registry 要求一个 `event_type` 只能注册一次。
-
-`HandlerSpec` 描述 Handler 身份、owner、事件 pattern、priority、kind、timeout 和派生事件发布 pattern。同一 owner 内 `handler_id` 必须唯一。
-
-### Handler 结果
-
-Handler 必须返回 `EventHandlerResult`：
-
-- `handled` 控制 unicast Consumer 是否接受事件；
-- `transform` 只允许 Transformer 使用；
-- `derived_events` 保存后续发布请求；
-- `metadata` 进入 `HandlerExecutionResult`；
-- `error` 表示 Handler 主动报告的结构化失败。
-
-`_DispatchAccumulator` 把每次执行转换为 `HandlerExecutionResult`，同时收集错误和派生请求。一次根 publish 产生的所有信封和 Handler 结果都进入同一个 `EventDispatchResult`。
-
-当前 `record()` 会无条件收集 `derived_events`，即使该 Handler 同时返回了 error。若要改成“失败时禁止派生”，必须先明确外部语义并增加兼容测试，不能只修改一处分支。
-
-## 5. EventRegistry
-
-### 内部索引
-
-Registry 当前维护：
+Registry 为查询、唯一性检查和注销维护以下索引：
 
 ```text
 _events:               event_type -> (registration_id, EventSpec)
 _handlers:             registration_id -> HandlerRegistration
 _handler_keys:         (owner_id, handler_id) -> registration_id
 _owner_registrations:  owner_id -> set[registration_id]
-_tokens:               registration_id -> RegistrationToken
-_order:                单调递增的 Handler 注册序号
+_order:                Handler 注册顺序
 ```
 
-每个新增索引都必须能通过单项注销和 owner 注销完整清理，否则会产生幽灵注册或保留 Handler callable 强引用。
+修改注册逻辑时必须同步维护所有索引，否则会产生幽灵注册或保留 Handler 函数引用。
 
-### 注册事件
+注册约束为：一个 event type 只能有一个 EventSpec，同一 owner 内 Handler ID 唯一。Handler 可以先于对应 EventSpec 订阅，但事件发布时必须已经注册。
 
-`register(EventSpec)` 的流程：
+匹配支持精确类型、尾部 `.*` 和全局 `*`，结果按 `(priority, order)` 排序。`matching_handlers()` 返回当前 Handler 的新列表，后续注册变化不会修改这份在途快照。
 
-1. `_validate_event_type()` 校验事件名；
-2. 检查 event type 是否已存在；
-3. 生成 registration ID；
-4. 写入 `_events` 和 owner 索引；
-5. 创建并保存 `RegistrationToken`。
+RegistrationToken 通过 registration ID 注销单项注册，`unregister_owner()` 清理一个 owner 的全部注册。注销不级联，也不会撤回已经进入分发快照的 Handler。Token 没有 active 字段，重复注销由 Registry 的无操作路径保证幂等。
 
-重复事件不会覆盖已有定义，而是抛出带有 `registration_conflict` 的 `EventRegistrationError`。
+## 4. Bus 生命周期
 
-### 注册 Handler
-
-`subscribe(HandlerSpec, handler)` 的流程：
-
-1. 校验 pattern；
-2. Transformer 额外要求精确订阅已经注册的事件；
-3. 检查 `(owner_id, handler_id)` 是否重复；
-4. 增加注册序号；
-5. 写入 Handler 主记录、唯一键索引和 owner 索引；
-6. 返回 RegistrationToken。
-
-Transformer 必须在目标事件注册之后注册，因此组合根的启动顺序会影响 Transformer 安装。
-
-### pattern 和排序
-
-只支持三类 pattern：
+EventBus 是需要显式启动和关闭的后台服务。事件和 Handler 可以在启动前注册，但只有 Bus 进入 RUNNING 后才能发布事件。
 
 ```text
-body.input.received   # exact
-body.*                # trailing wildcard
-*                     # global wildcard
+STOPPED -> RUNNING -> DRAINING -> STOPPED
 ```
 
-`matching_handlers()` 遍历当前 Handler，调用 `event_pattern_matches()`，然后按 `(priority, order)` 排序。priority 越小越先执行，同 priority 保持注册顺序。
+| 状态 | 接收 publish | 行为 |
+|---|---|---|
+| `STOPPED` | 否 | 初始状态或已经停止 |
+| `RUNNING` | 是 | worker 正常处理队列 |
+| `DRAINING` | 否 | 拒绝新入口，继续处理已有事件链 |
 
-当前实现每次 publish 都动态遍历 Handler，没有缓存匹配结果。以后若增加缓存，注册和注销必须同步失效缓存。
+关键行为：
 
-### 注销
+- `start()` 创建固定数量的 worker；RUNNING 时重复调用无副作用；
+- `publish()` 校验并入队，返回 None，不等待 Handler；
+- worker 分发前再次校验，避免继续使用入队后被注销的 EventSpec；
+- `wait_idle()` 等待队列归零，但不能阻止其他生产者随后发布；
+- `stop()` 拒绝新事件，并在超时范围内等待队列排空；
+- Registry 不随 stop 清空，Bus 可以保留注册后重新启动。
 
-`RegistrationToken.unregister()` 调用 Registry，并通过 `active` 保证幂等。`unregister_owner()` 遍历 owner 索引并复用单项注销逻辑。
+DRAINING 时，公开 publish 会被拒绝，但已提交 Flow 的派生事件通过内部 `_enqueue_all()` 继续入队。这样已有事件链能够完整排空。不要把内部派生发布改为公开 publish。
 
-当前注销没有级联关系：
+多个 stop 调用共享同一个关闭任务，并使用 shield 避免单个等待者取消整个关闭过程。关闭超时后，Bus 会取消 worker 并丢弃剩余队列。
 
-- 注销一个 EventSpec 不会自动删除其他 owner 对该事件的 Handler；
-- 注销一个 Handler 不影响事件定义；
-- `unregister_owner()` 只清理该 owner 自己拥有的注册。
+当前队列无界，也未校验并发数和超时配置。`dispatch_concurrency=0` 会导致队列无人消费。
 
-因此事件 owner 卸载后，其他 owner 的订阅可能仍保留在 Registry 中，只是事件未重新注册前不会被执行。改变这一行为需要先定义跨 owner 生命周期语义。
+### start 与 worker
 
-## 6. EventBus 的 publish 调用链
+`start()` 只在 STOPPED 创建 worker。worker 数量在一次运行周期内固定，每个任务名称包含序号，便于日志和任务诊断。
+
+worker 循环从 Queue 取出信封并调用 `_dispatch_one()`，最后保证 `task_done()` 与取出操作成对。单个事件的异常只会被记录，不会让 worker 退出；CancelledError 则用于结束 worker。
+
+### publish 与二次校验
+
+公开 publish 的顺序是“检查状态 → 校验信封 → 入队”。队列使用 `put_nowait()`，当前不会因为积压而阻塞发布者。
+
+worker 取出事件后再次调用 `_validate_envelope()`。这不是单纯重复：事件入队后 EventSpec 可能被注销，Payload 中的可变状态也可能变化。第二次校验保证分发使用当前注册事实。
+
+二次校验失败发生在后台 worker 中，只会记录到日志，不会回到已经返回的 publish 调用方。
+
+### wait_idle 与 stop
+
+Queue.join 依靠 unfinished task 计数工作。派生事件必须在父事件调用 task_done 之前入队，才能保证 wait_idle 覆盖整条派生链。
+
+首次 stop 会创建 `_drain_and_stop()` 任务。该任务先用 `asyncio.wait_for()` 等待 wait_idle；无论正常完成还是超时，finally 都会取消 worker、等待其退出、清理队列并恢复 STOPPED。
+
+清理剩余队列时，每次 `get_nowait()` 都必须配对一次 `task_done()`。否则后续 wait_idle 或 restart 可能永远等待错误的队列计数。
+
+## 5. 分发与并发
+
+一条事件可能同时匹配多个 Handler。普通 Handler 互不依赖，可以并发；流控制 Handler 需要先完成，才能决定后续 Handler 看到什么 Payload、是否继续执行。
 
 ```mermaid
 flowchart TD
-    Publish["publish(envelope)"] --> Queue["放入 FIFO queue"]
-    Queue --> Limit["检查处理数量上限"]
-    Limit --> Dispatch["_dispatch_one"]
-    Dispatch --> Validate["_validate_envelope"]
-    Validate --> Match["registry.matching_handlers"]
-    Match --> Transform["_run_transformers"]
-    Transform --> Target["_target_matches"]
-    Target --> Main["_run_handlers"]
-    Main --> Derived["_derive"]
-    Derived --> Queue
+    Publish["publish"] --> Queue["校验并入队"]
+    Queue --> Worker["worker 取出事件"]
+    Worker --> Match["再次校验并取得 Handler 快照"]
+    Match --> Normal["普通 Handler 创建并发任务"]
+    Match --> Control["流控制 Handler 顺序等待"]
+    Normal --> Finish["成功提交 / 失败丢弃"]
+    Control --> Finish
+    Finish --> Derived["派生事件重新入队"]
 ```
 
-### publish()
+主要方法与职责：
 
-`publish()` 为每次根调用创建：
+| 方法 | 职责 |
+|---|---|
+| `publish()` | 检查状态、验证信封并入队 |
+| `_run_worker()` | 取出事件，保证 get 与 task_done 成对 |
+| `_dispatch_one()` | 匹配并遍历 Handler |
+| `_run_handler()` | 执行普通 Handler 并处理其派生事件 |
+| `_invoke()` | 应用超时、异常隔离和 Flow 提交 |
+| `_build_derived()` | 创建带父子追踪关系的子信封 |
 
-- 一个空的 `EventDispatchResult`；
-- 一个以根信封开始的 FIFO `deque`；
-- 一个已处理信封计数器。
+`_dispatch_one()` 首先取得已经排序的 Handler 列表。这是本次分发的快照，随后注销不会撤回其中的函数引用。
 
-循环每次取出一个信封，通过 `_dispatch_one()` 分发，将最终有效信封加入 `result.envelopes`，再把合法派生事件追加到队尾。因此当前派生顺序是广度优先。
+`_dispatch_one()` 校验当前信封并取得 Handler 快照。遍历过程中，普通 Handler 加入 TaskGroup，流控制 Handler 原地等待；成功提交的派生事件重新入队，stop 标记会结束后续遍历。离开 TaskGroup 前仍会等待已经启动的普通 Handler。
 
-`max_dispatch_depth` 虽然名称包含 depth，当前限制的是一次 publish 最多处理的信封总数。达到上限后记录 `handler_failed` 并放弃队列中剩余信封。
+TaskGroup 只负责管理普通 Handler 的任务生命周期。具体 timeout 和业务异常已经在 `_invoke()` 中隔离，因此正常情况下一个普通 Handler 失败不会取消同组任务。
 
-### _dispatch_one()
+### 普通 Handler
 
-单个信封依次经历：
+`controls_flow=False` 时，Bus 在 TaskGroup 中创建独立任务，然后继续遍历。普通 Handler 可以并发，每个 Handler 拥有自己的 Flow。
 
-1. `_validate_envelope()` 获取 EventSpec，并校验 Payload 类型；
-2. Registry 动态匹配和排序 Handler；
-3. 筛出 Transformer 并依次运行；
-4. 使用转换后的最终信封过滤 Consumer 和 Observer；
-5. 执行主 Handler；
-6. 返回派生请求、最终信封和本信封的选择错误。
+priority 只决定任务创建顺序，不保证完成顺序，也不保证不同 Handler 派生事件的入队顺序。业务依赖应通过新的事件表达，不能依赖并发完成顺序。
 
-未注册或 Payload 非法时不调用 Handler，但原信封仍会加入 `result.envelopes`，错误加入总结果。
+### 流控制 Handler
 
-## 7. 三类 Handler 的执行语义
+`controls_flow=True` 时，Bus 会等待 Handler 完成。成功替换的 Payload 只提供给尚未启动的后续 Handler；成功停止传播也只跳过后续 Handler。
 
-### Transformer
-
-Transformer 在 Consumer 和 Observer 之前执行，并且当前不应用 `target_owner_id` 过滤。它只能返回 `EventTransform` 来替换 Payload，不能修改 event type、source、target 或 trace。
-
-每次成功转换都使用 `dataclasses.replace()` 生成新信封。若新 Payload 不满足 EventSpec：
-
-1. 记录 `payload_invalid`；
-2. 保留上一个合法信封；
-3. 继续执行后续 Transformer 和主 Handler。
-
-Transformer 返回自身 error 时不会应用它同时提供的 transform。
-
-### Consumer
-
-- broadcast：按排序结果执行全部 Consumer；
-- unicast：仅“没有 error 且 `handled=True`”算接受，随后停止执行剩余 Consumer；
-- unicast 所有 Consumer 都拒绝或失败时返回 `handler_not_found`。
-
-### Observer
-
-Observer 总是在 Consumer 阶段后执行，不参与 unicast 接受竞争。target 过滤同时适用于 Consumer 和 Observer。
-
-当前边缘行为：
-
-| Handler 情况 | broadcast | unicast |
+| 顺序 | Handler | 看到的信封 |
 |---|---|---|
-| 无 Consumer、无 Observer | `handler_not_found` | `handler_not_found` |
-| 只有 Observer | 执行 Observer，不报未处理 | 执行 Observer，再报 `handler_not_found` |
-| Consumer 报错 | 继续后续 Consumer | 继续寻找可接受 Consumer |
+| priority 10 | 普通 Handler A | 原信封，任务已经启动 |
+| priority 20 | 流控制 Handler B | 原信封，可提交新 Payload |
+| priority 30 | 普通 Handler C | B 提交后的新信封 |
 
-如果修改这些行为，应先更新公开契约，而不是只调整 `_run_handlers()`。
+A 不会因 B 的 replace 或 stop 被取消。B 失败时，Bus 丢弃其修改，继续使用原信封。
 
-## 8. Handler 调用与错误隔离
+没有匹配 Handler 时事件直接完成，不产生公开错误。worker 会捕获单个事件的未预期异常并继续运行。
 
-所有 Handler 最终通过 `_invoke()` 调用：
+## 6. EventFlow 的提交边界
 
-1. 创建 coroutine；
-2. 有 timeout 时使用 `asyncio.wait_for()`；
-3. 校验返回值必须是 `EventHandlerResult`；
-4. 将超时和未知异常转换为结果型错误。
+EventFlow 是一次 Handler 调用的临时工作区。Bus 创建 Flow 时注入 Payload 校验和派生信封构造回调，Flow 本身不直接访问 Registry。
 
-具体规则：
-
-- timeout -> `handler_timeout`，`retryable=True`；
-- 抛出异常 -> 内部 Logger 记录堆栈，对外返回 `handler_failed`；
-- 返回其他类型 -> `handler_failed`；
-- 非 Transformer 返回 transform -> `_invoke_handler()` 记录 `permission_denied`；
-- Handler 主动返回 error -> 原样记录到执行结果和总错误列表。
-
-`asyncio.CancelledError` 不属于普通 Handler 失败，当前不会被 `except Exception` 转换，会继续向上传播。不要为了“兜底”改成捕获 `BaseException`，除非同时定义清楚任务取消语义。
-
-公开错误不能包含完整 Payload、密钥或原始异常消息。允许记录异常类型和 Handler/owner 等定位信息。
-
-一个 Handler 的失败不能阻止无依赖的后续 Handler，但 unicast 的停止规则仍然只由首个成功接受者决定。
-
-## 9. 派生事件
-
-Handler 返回 `EventPublishRequest`，而不是完整 EventEnvelope。这样 Handler 无法直接指定可信 source、event ID 或 trace。
-
-`_derive()` 按以下顺序处理：
-
-1. 确认派生事件已经注册；
-2. 调用 `_may_publish()` 校验发布权限；
-3. 继承父 metadata，再用请求 metadata 覆盖同名字段；
-4. 生成新 event ID 和 emitted time；
-5. 使用请求的 occurred time，未提供时使用当前时间；
-6. 使用 Handler owner 作为 source；
-7. 继承父 trace ID，并把父 event ID 写入 `parent_event_id`；
-8. 将子信封放回 publish 队列。
-
-派生 Payload 类型不会在 `_derive()` 中立即校验，而是在子信封下一次进入 `_dispatch_one()` 时校验。
-
-发布权限规则为：Handler 可以发布自己 owner 的事件，或 `HandlerSpec.publish_patterns` 允许的事件。两处授权实现必须保持一致：
-
-- 根事件：`EventClient._authorize()`；
-- 派生事件：`EventBus._may_publish()`。
-
-修改 pattern 语义时必须同时验证注册匹配和这两处发布授权。
-
-## 10. EventClient 与 ModuleEventAPI
-
-### EventClient
-
-`EventClient` 在创建时绑定 `owner_id` 和 `publish_patterns`。
-
-`publish()` 先授权，再由 `_build()` 生成根信封：新 event ID、新 trace ID、当前时间、绑定 owner 作为 source。调用方只提供 event type、Payload、target 和 metadata。
-
-授权发生在 EventBus 校验之前：未注册事件若不匹配 Client 权限会先抛 `EventPermissionError`；若已被 publish pattern 允许，则进入 Bus 后返回 `event_not_registered`。
-
-`derived()` 只授权并构造 `EventPublishRequest`，不会立即分发。真正的派生 source 和 trace 在 Handler 返回结果后由 Bus 生成。
-
-当前 `_build()` 接收的 `spec` 参数没有参与信封构造，这是现有实现遗留，不应误认为它会自动设置 target 或执行 Payload 校验。
-
-`EventBus.publish()` 接收完整信封并信任其中的 source，不执行 Client 身份校验。因此原始 Bus 只应由组合根和 Event 基础设施持有，不能作为普通 Module 或第三方插件的发布入口。
-
-### ModuleEventAPI
-
-`ModuleEventAPI` 是受信核心 Module 的便捷门面：
-
-- `register()` 补全 EventSpec.owner_id；
-- `subscribe()` 补全 HandlerSpec.owner_id；
-- `derived()` 委托绑定 owner 的 Client；
-- `client` 用于发布根事件。
-
-当前权限行为需要特别注意：
-
-- `create()` 为核心 Client 配置 `publish_patterns=("*",)`；
-- `subscribe()` 虽接收 `publish_patterns`，构造 HandlerSpec 时却固定写入 `("*",)`。
-
-因此核心 Module 当前默认拥有跨命名空间发布能力，传入 `subscribe()` 的 pattern 不会收紧权限。这不是第三方插件的安全边界；插件接入应由宿主提供新的受限门面。
-
-## 11. 错误模型
-
-Event 使用两种失败表达：
-
-| 发生阶段 | 表达方式 | 示例 |
-|---|---|---|
-| 分发前的声明或身份错误 | 抛异常 | 注册冲突、Client 发布越权、信封必要 ID 缺失 |
-| 已进入分发的可隔离失败 | `EventError` 写入结果 | Payload 非法、Handler 超时或异常、无 Handler |
-
-`EventRegistrationError` 和 `EventPermissionError` 都保留原始结构化错误在 `.error` 属性中。
-
-新增错误时：
-
-- `code` 必须稳定且可供程序判断；
-- `message` 只用于人类诊断；
-- `details` 只放安全的定位信息；
-- `retryable` 表示是否允许上层重试，不触发 EventBus 自动重试；
-- 同步增加错误路径测试和公开文档。
-
-## 12. 生命周期与并发
-
-当前 Registry 设计用于应用启动和停止阶段，没有为 publish、注册和注销并发提供事务语义。
-
-推荐生命周期：
+内部状态包括：
 
 ```text
-创建 EventBus
-  -> 注册 EventSpec
-  -> 注册 Handler（Transformer 必须晚于目标事件）
-  -> 开放业务输入
-  -> 停止新输入
-  -> 等待必要的在途调用
-  -> unregister_owner()
-  -> 释放业务 Runtime
+_envelope       当前 Handler 使用的信封
+_derived        本次调用暂存的派生信封
+_controls_flow  是否允许 replace 和 stop
+_stopped        是否请求停止后续传播
+_finished       Flow 是否已经提交或丢弃
 ```
 
-`matching_handlers()` 返回新的列表，因此已经进入某次分发的 Handler 列表不会因为随后注销而被可靠撤回。若未来支持热插拔，需要先定义注册快照、在途调用和卸载等待语义，再选择锁或版本化 Registry，不能只给部分字典加锁。
+| 动作 | 暂存内容 | 限制 |
+|---|---|---|
+| `emit()` | 已验证的派生信封 | 所有 Handler 可用 |
+| `replace_payload()` | 新的当前信封 | 仅 controls_flow Handler |
+| `stop_propagation()` | 停止标记 | 仅 controls_flow Handler |
 
-## 13. 常见修改应落在哪里
+Handler 正常返回时 `_commit()` 一次性返回最终信封、停止标记和派生事件；超时、异常或取消时 `_discard()` 清空暂存内容。
 
-### 新增业务事件或 Handler
+`_commit()` 和公开动作都会先检查 Flow 是否仍处于活动状态。`_discard()` 则允许重复调用，以便不同异常路径可以安全清理同一个 Flow。
 
-不修改 `core.event`。在业务 Module 定义 Payload 并通过 ModuleEventAPI 注册。
+普通 Handler 调用 replace 或 stop 时会抛出 RuntimeError。该异常进入 `_invoke()` 的异常隔离路径，因此这个 Handler 此前暂存的 emit 也会被一起丢弃。
 
-### 修改事件名或 pattern 规则
+这里的事务只覆盖 EventFlow 操作，不能回滚数据库写入、Runtime 状态或外部请求。需要更强一致性时，应由业务层设计可靠事件表（outbox）、幂等或补偿机制。
 
-修改 `registry.py` 的校验和 `patterns.py` 的匹配，并同时验证：
+Flow 完成后不能继续使用。后台任务必须保存父 EventEnvelope，并改用 EventClient.publish/emit。
 
-- Handler 订阅匹配；
-- EventClient 发布授权；
-- 派生事件发布授权；
-- 已有事件名兼容性。
+## 7. Handler、派生事件与错误
 
-### 新增 HandlerKind
+Bus 把每次 Handler 调用当作独立的失败边界：一个 Handler 出错时，只丢弃它自己的 Flow，不影响同一事件的其他 Handler，也不让 worker 退出。
 
-需要同时修改 contracts 和 Bus，并明确：
+HandlerSpec.timeout 优先；未设置时，普通 Handler 使用 `default_handler_timeout`，流控制 Handler 使用 `flow_control_timeout`。
 
-- 它在 Transformer、Consumer、Observer 中的相对阶段；
-- 是否接受 target 过滤；
-- 是否参与 unicast；
-- 是否允许 transform 或派生事件；
-- 失败如何记录；
-- HandlerExecutionResult 如何表达。
+`_invoke()` 的结果只有两种：
 
-### 修改分发顺序或并发执行
+- Handler 正常返回：提交 Flow；
+- Handler 超时或抛出异常：记录日志并丢弃 Flow。
 
-这是公开语义变更。必须考虑 priority、unicast 短路、Observer 顺序、派生事件顺序、异常隔离和结果列表顺序。不能只把循环替换为 `gather()`。
+CancelledError 会在丢弃 Flow 后继续传播，因为它是 worker 关闭的一部分。不要把 BaseException 当成普通 Handler 失败捕获。
 
-### 增加插件接入
+`_invoke()` 通过 `asyncio.wait_for()` 应用选定的超时。正常完成时返回 commit 数据；超时和普通异常分别记录日志，统一 discard 并返回内部 None。
 
-在 Event 核心之外实现宿主门面，把插件 Manifest 转换为 owner、事件命名空间以及发布/订阅 pattern。EventBus 不应导入插件加载器或 Manifest 类型。
+流控制 Handler 的 `_invoke()` 返回内部 None 时，Bus 保留原信封并继续遍历。普通 Handler 返回内部 None 时，只是不产生可入队的派生事件。
 
-### 增加消息队列
+Handler 的公开签名返回 None，Bus 不校验实际返回值。`_invoke()` 内部返回的提交数据或 None 不属于公开 Handler 契约。
 
-出现第二个真实 Transport 后再提取接口，并明确序列化、确认、重试、幂等、顺序和跨进程 trace。当前 callable Registry 不能直接等同于跨进程订阅。
+派生事件在 `flow.emit()` 时完成定义和 Payload 校验，Handler 正常返回后才入队。子信封：
 
-## 14. 测试与排错
+- 使用 Handler owner 作为 source；
+- 继承父 trace ID；
+- 记录父 event ID；
+- 复制父 metadata，再用子 metadata 覆盖同名键；
+- 生成新的 event ID 和时间。
 
-核心改动至少覆盖受影响的维度：
+同一 Flow 内多次 emit 保持调用顺序；不同并发 Handler 之间没有稳定顺序。Handler 内的派生校验错误也会被视为 Handler 异常，不会返回给最初的发布者。
 
-- 事件名和 pattern 校验；
-- 重复事件及重复 `(owner_id, handler_id)`；
-- exact、尾部通配和全局通配；
-- priority 和注册顺序；
-- broadcast、unicast、Observer 和 target；
-- Transformer 链、失败回退和转换后 Payload 校验；
-- Handler 正常返回、主动 error、非法返回、异常和超时；
-- 派生权限、source、target、metadata、occurred time 和 trace；
-- FIFO 派生顺序与处理数量上限；
-- Token 单项注销、重复注销和 owner 清理；
-- Event 核心不导入业务 Module。
+`_build_derived()` 使用 Flow 当前信封作为父事件。metadata 先复制父映射，再应用子 metadata，所以子事件可以覆盖同名诊断字段，但不会修改父信封。
 
-排错时优先查看 `EventDispatchResult`：
+派生信封构造成功仍不代表发布成功：它只进入 Flow 的 `_derived`。Handler 后续若抛出异常，已经构造的全部子信封都会被 discard。
 
-1. `envelopes` 判断事件是否进入分发以及最终 Payload；
-2. `handlers` 判断实际执行了谁、是否 handled、是否主动报错；
-3. `errors` 根据 code 判断失败阶段；
-4. trace ID 和 parent event ID 还原派生关系；
-5. 内部 Logger 查看被脱敏前的 Handler 异常堆栈。
+## 8. Client、owner 和信任边界
 
-业务事件的案例测试应放在所属 Module；Event 核心测试只固化通用语义。
+EventClient 在构造时绑定 owner。`publish()` 为根事件生成新 event ID、新 trace、UTC 时间和 source。
 
-## 15. 提交前检查
+根信封由 `_build()` 统一构造：生成 event ID、新 trace 和 UTC 时间，使用 Client owner 作为 source，metadata 最终由 EventEnvelope 转换成只读 Mapping。
 
-- [ ] Event 是否仍然不知道具体业务 Module 和事件名？
-- [ ] 新状态是否在单项注销和 owner 注销中完整清理？
-- [ ] pattern 的匹配与两条授权路径是否一致？
-- [ ] Handler 排序、target 和三种 kind 的语义是否保持？
-- [ ] 异常、超时和非法返回是否继续隔离并脱敏？
-- [ ] owner、source、target、trace 和 metadata 继承是否正确？
-- [ ] 外部可观察行为变更是否包含测试和公开文档更新？
-- [ ] 新公开对象是否加入 `core.event.__init__.__all__`？
+`emit(parent, ...)` 用于 Handler 事务之外延续事件链。它继承父 trace 和 metadata，但通过公开 publish 入队，因此 DRAINING 时会被拒绝，也不会随原 Flow 回滚。
+
+ModuleEventAPI 继承 EventClient，并在 `register()`、`subscribe()` 中自动补全 owner。
+
+ModuleEventAPI 不保存另一份 Client，也不通过 `client` 属性转发。修改继承关系时要同时检查发布方法、owner 存储和公开类型标注，避免出现两套身份来源。
+
+EventBus.publish 接收完整信封并信任其中的 source，因此原始 Bus 只应交给组合根和 Event 基础设施。ModuleEventAPI 也没有插件权限校验；第三方插件需要宿主提供受限门面。
+
+## 9. 注销与在途调用
+
+Token 用于单项注销，`unregister_owner()` 用于 Module 整体卸载。推荐顺序：
+
+```text
+停止外部输入 -> 排空或停止 Bus -> 注销 owner -> 释放 Runtime
+```
+
+不要先释放 Runtime，否则已取得 Handler 快照的在途调用仍可能访问它。
+
+当前 Registry 没有热插拔事务。真正支持运行期卸载前，需要明确新注册何时可见、注销是否等待在途 Handler、卸载超时如何处理，以及 EventSpec owner 离开后其他订阅如何处理。仅增加字典锁不能解决这些语义问题。
+
+## 10. 修改指引
+
+| 修改目标 | 主要文件 | 必须同时考虑 |
+|---|---|---|
+| 修改事件名或 pattern | `registry.py`、`patterns.py` | 校验、匹配和缓存失效 |
+| 修改分发并发 | `bus.py` | priority、Payload 可见性、stop 和派生顺序 |
+| 增加 Flow 动作 | `flow.py`、`bus.py` | 权限、校验、commit、discard 和结束后调用 |
+| 修改关闭流程 | `bus.py` | queue 计数、内部派生、取消和多次 stop |
+| 修改公开契约 | 对应实现、`__init__.py` | 外部文档和兼容性测试 |
+| 接入插件或 Transport | Event 外部基础设施 | 权限、序列化、确认、重试和幂等 |
+
+新增业务事件或 Handler 不在此表中，因为它们不应修改 Event 核心。
+
+## 11. 测试和排错
+
+核心改动至少覆盖：
+
+- 事件名、pattern、重复注册和 owner 注销；
+- priority、注册顺序和普通 Handler 并发；
+- 流控制 Handler 的 replace、stop、失败回滚和可见范围；
+- Handler 正常、超时、异常和取消；
+- 派生事件的校验、source、trace、metadata 和顺序；
+- start、wait_idle、正常 stop、超时 stop 和 restart；
+- `core.event` 不导入业务 Module。
+
+排错按运行顺序检查：Bus 状态 → EventSpec 与 Payload → pattern 与 priority → Handler 日志 → Flow 是否提交 → 派生事件校验 → trace/source → 关闭状态。
+
+业务事件测试放在所属 Module；`core.event` 测试只固化通用通信语义。
+
+## 12. 当前限制和提交检查
+
+当前没有配置值校验、有界队列、背压、结果汇总、自动重试、持久化、热插拔事务、跨进程 Transport 或插件权限门面。
+
+提交前确认：
+
+- [ ] Event 仍然不认识具体业务 Module 或事件名；
+- [ ] 新状态可以被单项注销和 owner 注销完整清理；
+- [ ] Handler 失败不会提交 Flow 或终止 worker；
+- [ ] 并发、Payload 可见性和 stop 范围明确；
+- [ ] source、trace、parent ID 和 metadata 继承正确；
+- [ ] start、wait_idle、stop 和 restart 能收敛；
+- [ ] 外部行为已同步到公开文档；
+- [ ] 新公开对象已加入 `core.event.__all__`。

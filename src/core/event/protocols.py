@@ -3,9 +3,10 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
-from core.event.contracts import EventEnvelope, EventHandlerResult
+from core.event.flow import EventFlow
 
-EventHandler = Callable[[EventEnvelope], Awaitable[EventHandlerResult]]
+EventHandler = Callable[[EventFlow], Awaitable[None]]
+
 
 class Logger(Protocol):
     """日志记录器协议: 定义日志记录器的接口"""

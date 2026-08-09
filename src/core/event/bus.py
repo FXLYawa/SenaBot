@@ -2,57 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import deque
-from dataclasses import dataclass, field, replace
+from collections.abc import Mapping
+from enum import Enum, auto
 
-from core.common.types import new_id, utc_now
-from core.event.contracts import (
-    EventDispatchResult,
-    EventEnvelope,
-    EventHandlerResult,
-    EventMode,
-    EventPublishRequest,
-    EventSpec,
-    EventTransform,
-    HandlerExecutionResult,
-    HandlerKind,
-    HandlerSpec,
-    TraceInfo,
-)
+from core.event.common import new_id, utc_now
+from core.event.contracts import EventSpec, HandlerSpec
+from core.event.envelope import EventEnvelope, TraceInfo
 from core.event.errors import EventError
-from core.event.patterns import event_pattern_matches
+from core.event.flow import EventFlow
 from core.event.protocols import EventHandler, Logger
 from core.event.registry import EventRegistry, HandlerRegistration, RegistrationToken
 
+class _BusState(Enum):
+    """EventBus 内部生命周期; DRAINING 关闭入口但继续处理现有事件"""
 
-@dataclass(slots=True)
-class _DispatchAccumulator:
-    """一次信封分发期间共用的结果与派生请求累加器"""
-    
-    results: EventDispatchResult
-    derived: list[tuple[EventPublishRequest, HandlerRegistration]] = field(default_factory=list)
-    
-    def record(
-        self,
-        registration: HandlerRegistration,
-        handler_result: EventHandlerResult,
-        error: EventError | None
-    ) -> None:
-        """记录一次 Handler 执行结果"""
-        self.results.handlers.append(
-            HandlerExecutionResult(
-                registration.spec.handler_id,
-                registration.spec.owner_id,
-                handler_result.handled,
-                dict(handler_result.metadata),
-                error,
-            )
-        )
-        if error is not None:
-            self.results.errors.append(error)
-        self.derived.extend(
-            (request, registration) for request in handler_result.derived_events
-            )
+    STOPPED = auto()
+    RUNNING = auto()
+    DRAINING = auto()
 
 
 class EventBus:
@@ -64,15 +30,26 @@ class EventBus:
     def __init__(
         self,
         registry: EventRegistry | None = None,
-        max_dispatch_depth: int = 100,
+        *,
+        dispatch_concurrency: int = 8,  # 最大并发分发数
+        default_handler_timeout: float = 60.0,
+        flow_control_timeout: float = 5.0,
+        shutdown_timeout: float = 10.0,
         logger: Logger | None = None
     ) -> None:
         self.registry = registry or EventRegistry()
-        self.max_dispatch_depth = max_dispatch_depth
         self.logger = logger or logging.getLogger("senabot.event")
+        self.dispatch_concurrency = dispatch_concurrency
+        self.default_handler_timeout = default_handler_timeout
+        self.flow_control_timeout = flow_control_timeout
+        self.shutdown_timeout = shutdown_timeout
+        self._queue: asyncio.Queue[EventEnvelope | None] = asyncio.Queue()
+        self._workers: tuple[asyncio.Task[None], ...] = ()
+        self._shutdown_task: asyncio.Task[None] | None = None
+        self._state: _BusState = _BusState.STOPPED
         
         
-    def register_event(self, spec: EventSpec) -> RegistrationToken:
+    def register(self, spec: EventSpec) -> RegistrationToken:
         """注册事件类型"""
         return self.registry.register(spec)
     
@@ -82,341 +59,273 @@ class EventBus:
         return self.registry.subscribe(spec, handler)
     
     
-    async def publish(self, envelope: EventEnvelope) -> EventDispatchResult:
-        """在 BUS 上发布事件"""
+    async def start(self) -> None:
+        """启动事件 worker"""
         
-        result = EventDispatchResult()
-        queue: deque[EventEnvelope] = deque([envelope])
-        processed = 0
-        while queue:
-            current = queue.popleft()
-            if processed >= self.max_dispatch_depth:
-                result.errors.append(
-                    EventError(
-                        code="handler_failed",
-                        message="Maximum derived event count exceeded.",
-                        details={"limit": self.max_dispatch_depth},
-                        retryable=False
-                    )
-                )
-                break
-            processed += 1
-            derived, effective, dispatch_error = await self._dispatch_one(current, result)
-            
-            result.envelopes.append(effective)
-            if dispatch_error is not None:
-                result.errors.append(dispatch_error)
-            for request, registration in derived:
-                child, error = self._derive(effective, request, registration)
-                if error is not None:
-                    result.errors.append(error)
-                elif child is not None:
-                    queue.append(child)
-        return result
-            
+        if self._state is _BusState.RUNNING:
+            return
+        if self._state is _BusState.DRAINING:
+            raise EventError(
+                "event_bus_unavailable",
+                "EventBus is not accepting events.",
+                {"state": "draining"},
+            )
+        self._state = _BusState.RUNNING
+        self._workers = tuple(
+            asyncio.create_task(
+                self._run_worker(),
+                name=f"senabot-event-worker:{i}",
+            )
+            for i in range(self.dispatch_concurrency)
+        )
+
+
+    async def stop(self) -> None:
+        """拒绝新事件，排空队列并停止 worker"""
+        
+        if self._state is _BusState.STOPPED:
+            return
+        shutdown_task = self._shutdown_task
+        if shutdown_task is None:
+            self._state = _BusState.DRAINING
+            shutdown_task = asyncio.create_task(self._drain_and_stop(), name="senabot-event-shutdown")
+            self._shutdown_task = shutdown_task
+        await asyncio.shield(shutdown_task)
+    
+    
+    async def publish(self, envelope: EventEnvelope) -> None:
+        """发布事件"""
+        
+        if self._state is not _BusState.RUNNING:
+            raise EventError(
+                "event_bus_unavailable",
+                "EventBus is not accepting events.",
+                {"state": self._state.name.lower()},
+            )
+        self._validate_envelope(envelope)
+        self._queue.put_nowait(envelope)
+    
     
     async def unregister_owner(self, owner_id: str) -> None:
+        """注销指定 owner_id 的所有注册"""
         await self.registry.unregister_owner(owner_id)
         
         
-    async def _dispatch_one(
-        self,
-        envelope: EventEnvelope,
-        result: EventDispatchResult,
-    ) -> tuple[
-        list[tuple[EventPublishRequest, HandlerRegistration]], 
-        EventEnvelope, 
-        EventError | None
-    ]:
-        """分发单个事件信封, 运行所有匹配的 Handler"""
-        
-        spec, error = self._validate_envelope(envelope)
-        if error is not None:
-            return [], envelope, error
-        assert spec is not None
-        # 创建一个累加器来记录 Handler 执行结果和派生事件请求
-        accumulator = _DispatchAccumulator(result)
-        # 运行所有匹配的 Handler, 包括 Transformer、Consumer 和 Observer
-        registrations = self.registry.matching_handlers(envelope.event_type)
-        # 先运行 Transformer, 允许每个 Transformer 替换 Payload
-        transformers = [reg for reg in registrations if reg.spec.kind == HandlerKind.TRANSFORMER]
-        # 运行 Transformer 并获取最终的有效事件信封
-        effective = await self._run_transformers(spec, envelope, transformers, accumulator)
-        # 运行 Consumer 和 Observer, 直到 unicast 的首个 Consumer 接受事件
-        destinations = [
-            reg for reg in registrations 
-            if reg.spec.kind != HandlerKind.TRANSFORMER
-            and self._target_matches(effective, reg)
-        ]
-        dispatch_error = await self._run_handlers(spec, effective, destinations, accumulator)
-        return accumulator.derived, effective, dispatch_error
-        
-
-    async def  _run_transformers(
-        self,
-        evnet_spec: EventSpec,
-        envelope: EventEnvelope,
-        registrations: list[HandlerRegistration],
-        accumulator: _DispatchAccumulator,
-    ) -> EventEnvelope:
-        """依次运行 Transformer, 允许每个 Transformer 替换 Payload"""
-        
-        current = envelope
-        for reg in registrations:
-            handler_result = await self._invoke(current, reg)
-            transform_error = handler_result.error
-            if handler_result.transform is not None and transform_error is None:
-                transformed, transform_error = self._transform(
-                    evnet_spec, 
-                    current, 
-                    handler_result.transform, 
-                    reg,
-                )
-                if transformed is not None:
-                    current = transformed
-            accumulator.record(reg, handler_result, transform_error)
-        return current
-        
-        
-    async def _run_handlers(
-        self,
-        event_spec: EventSpec,
-        envelope: EventEnvelope,
-        registrations: list[HandlerRegistration],
-        accumulator: _DispatchAccumulator,
-    ) -> EventError | None:
-        """依次运行 Consumer 和 Observer, 直到 unicast 的首个 Consumer 接受事件"""
-        
-        consumers, observers = self._group_handlers(registrations)
-        if not consumers and not observers:
-            return EventError(
-                code="handler_not_found",
-                message=f"No handler matched: {envelope.event_type}",
-                details={"target_owner_id": envelope.target_owner_id},
-                retryable=False
-            )
-            
-        accepted = (event_spec.mode == EventMode.BROADCAST)
-        for reg in consumers:
-            handler_result, error = await self._invoke_handler(envelope, reg, accumulator)
-            if (
-                event_spec.mode == EventMode.UNICAST 
-                and handler_result.handled
-                and error is None
-            ):
-                accepted = True
-                break
-            
-        for reg in observers:
-            await self._invoke_handler(envelope, reg, accumulator)
-        if not accepted:
-            return EventError(
-                code="handler_not_found",
-                message=f"No consumer accepted: {envelope.event_type}",
-                details={"target_owner_id": envelope.target_owner_id},
-                retryable=False
-            )
-        return None        
-    
-    
-    async def _invoke_handler(
-        self,
-        envelope: EventEnvelope,
-        registration: HandlerRegistration,
-        accumulator: _DispatchAccumulator,
-    ) -> tuple[EventHandlerResult, EventError | None]:
-        """调用指定的 Handler 并记录结果到累加器"""
-
-        handler_result = await self._invoke(envelope, registration)
-        result_error = handler_result.error
-        if handler_result.transform is not None:
-            result_error = result_error or EventError(
-                code="permission_denied",
-                message="Only a transformer Handler may return EventTransform.",
-                details={"handler_id": registration.spec.handler_id},
-                retryable=False
-            )
-        accumulator.record(registration, handler_result, result_error)
-        return handler_result, result_error
-    
-    
-    @staticmethod
-    def _transform(
-        event_spec: EventSpec,
-        envelope: EventEnvelope,
-        transformer: EventTransform,
-        registration: HandlerRegistration,
-    ) -> tuple[EventEnvelope | None, EventError | None]:
-        """根据 Transformer 的结果生成新的事件信封"""
-
-        if event_spec.payload_type is not None and not isinstance(transformer.payload, event_spec.payload_type):
-            return None, EventError(
-                code="payload_invalid",
-                message=f"Transformer payload does not match {event_spec.event_type}.",
-                details={
-                    "handler_id": registration.spec.handler_id,
-                    "expected": event_spec.payload_type.__name__,
-                    "actual": type(transformer.payload).__name__,
-                },
-                retryable=False
-            )
-        return replace(envelope, payload=transformer.payload), None
-
-
-    async def _invoke(
-        self,
-        envelope: EventEnvelope,
-        registration: HandlerRegistration,
-    ) -> EventHandlerResult:
-        """隔离单个 Handler 的超时、异常和非法返回值"""
-
+    async def _drain_and_stop(self) -> None:
+        """关闭入口但继续处理现有事件"""
         try:
-            call = registration.handler(envelope)
-            outcome = (
-                await asyncio.wait_for(call, registration.spec.timeout)
-                if registration.spec.timeout is not None
-                else await call
-            )
-            if not isinstance(outcome, EventHandlerResult):
-                return EventHandlerResult(
-                    handled=False,
-                    error=EventError(
-                        code="handler_failed",
-                        message="Handler returned an unsupported result.",
-                        details={"handler_id": registration.spec.handler_id},
-                        retryable=False
-                    )
-                )
-            return outcome
+            await asyncio.wait_for(self._queue.join(), timeout=self.shutdown_timeout)
         except TimeoutError:
-            return EventHandlerResult(
-                handled=False,
-                error=EventError(
-                    code="handler_timeout",
-                    message=f"Handler timed out: {registration.spec.handler_id}",
-                    details={"owner_id": registration.spec.owner_id},
-                    retryable=True
-                )
+            self.logger.warning(
+                "EventBus shutdown timed out after %.1f seconds",
+                self.shutdown_timeout,
             )
-        except Exception as exc:
-            # 记录异常日志
-            self.logger.exception(
-                "Event handler failed: %s", registration.spec.handler_id
-            )
-            return EventHandlerResult(
-                handled=False,
-                error=EventError(
-                    code="handler_failed",
-                    message=f"Handler failed: {registration.spec.handler_id}",
-                    details={
-                        "owner_id": registration.spec.owner_id,
-                        "exception_type": type(exc).__name__,
-                    },
-                ),
-            )
-
-
-    def _validate_envelope(
-        self, envelope: EventEnvelope
-    ) -> tuple[EventSpec | None, EventError | None]:
-        """验证事件信封,确认其已注册且 payload 类型正确"""
-        
-        spec = self.registry.event_spec(envelope.event_type)
-        if spec is None:
-            return None, EventError(
-                code="event_not_registered",
-                message=f"Event type {envelope.event_type} is not registered.",
-                details={"event_type": envelope.event_type},
-                retryable=False
-            )
-        if spec.payload_type is not None and not isinstance(envelope.payload, spec.payload_type):
-            return None, EventError(
-                code="payload_invalid",
-                message=f"Payload type {type(envelope.payload).__name__} does not match expected type {spec.payload_type.__name__}.",
-                details={"event_type": envelope.event_type},
-                retryable=False
-            )
-        return spec, None
+        finally:
+            for task in self._workers:
+                task.cancel()
+            await asyncio.gather(*self._workers, return_exceptions=True)
+            self._discard_queued_events()
+            self._workers = ()
+            self._state = _BusState.STOPPED
+            self._shutdown_task = None
+    
+    def _discard_queued_events(self) -> None:
+        """丢弃队列中未处理的事件"""
+        while True:
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            else:
+                self._queue.task_done()
     
     
-    @staticmethod
-    def _group_handlers(
-        registrations: list[HandlerRegistration],
-    ) -> tuple[list[HandlerRegistration], list[HandlerRegistration]]:
-        """根据事件类型和分发模式选择合适的处理器"""
+    async def _run_worker(self) -> None:
+        """事件分发 worker"""
+        while True:
+            envelope = await self._queue.get()
+            try:
+                await self._dispatch_one(envelope)
+            except Exception as e:
+                self.logger.exception("Error dispatching event: %s", e)
+            finally:
+                self._queue.task_done()
+    
+    
+    async def _dispatch_one(self, envelope: EventEnvelope) -> None:
+        """分发单个事件"""
         
-        primary: list[HandlerRegistration] = []
-        observers: list[HandlerRegistration] = []
-        for reg in registrations:
-            if reg.spec.kind == HandlerKind.CONSUMER:
-                primary.append(reg)
-            elif reg.spec.kind == HandlerKind.OBSERVER:
-                observers.append(reg)
+        event_spec = self._validate_envelope(envelope)
+        registrations = self.registry.matching_handlers(envelope.event_type)
+        current = envelope
         
-        return primary, observers
+        async with asyncio.TaskGroup() as group:
+            for reg in registrations:
+                if not reg.spec.controls_flow:
+                    group.create_task(
+                        self._run_handler(reg, current, event_spec),
+                        name=(
+                            f"event-handler:{reg.spec.owner_id}:"
+                            f"{reg.spec.handler_id}"
+                        ),
+                    )
+                    continue
+                
+                flow = self._new_flow(current, reg, event_spec)
+                committed = await self._invoke(reg, flow)
+                if committed is None:
+                    continue
+                current, stopped, derived = committed
+                self._enqueue_all(derived)
+                if stopped:
+                    return
+    
+    
+    async def _run_handler(
+        self, 
+        registration: HandlerRegistration, 
+        envelope: EventEnvelope,
+        event_spec: EventSpec,
+    ) -> None:
+        """运行单个事件处理器"""
         
-        
-    @staticmethod
-    def _target_matches(
-        envelope: EventEnvelope, registration: HandlerRegistration
-    ) -> bool:
-        
-        target_owner_id = envelope.target_owner_id
-        if target_owner_id is None:
-            return True
-        return target_owner_id == registration.spec.owner_id
-        
-        
-    def _derive(
+        flow = self._new_flow(envelope, registration, event_spec)
+        committed = await self._invoke(registration, flow)
+        if committed is not None:
+            self._enqueue_all(committed[2])
+    
+    
+    def _new_flow(
         self,
-        parent: EventEnvelope,
-        request: EventPublishRequest,
+        envelope: EventEnvelope,
         registration: HandlerRegistration,
-    ) -> tuple[EventEnvelope | None, EventError | None]:
-        """根据 Handler 的派生请求生成新的事件信封"""
+        event_spec: EventSpec,
+    ) -> EventFlow:
+        """创建一个新的事件流"""
         
-        event_spec = self.registry.event_spec(request.event_type)
-        if event_spec is None:
-            return None, EventError(
-                code="event_not_registered",
-                message=f"Derived event type {request.event_type} is not registered.",
-                details={"event_type": request.event_type},
-                retryable=False
-            )
-        if not self._may_publish(registration, request.event_type, event_spec.owner_id):
-            return None, EventError(
-                code="permission_denied",
-                message="Handler attempted to publish outside its allowed namespace.",
-                details={"handler_id": registration.spec.handler_id, "event_type": request.event_type},
-                retryable=False
-            )
-        metadata = dict(parent.metadata)
-        metadata.update(request.metadata)
-        return (
-            EventEnvelope(
-                event_id=new_id("event"),
-                event_type=request.event_type,
-                occurred_at=request.occurred_at or utc_now(),
-                emitted_at=utc_now(),
+        return EventFlow(
+            envelope,
+            lambda payload: self._validate_payload(event_spec, payload),
+            lambda parent, event_type, payload, metadata: self._build_derived(
+                parent,
+                event_type,
+                payload,
+                metadata,
                 source_owner_id=registration.spec.owner_id,
-                target_owner_id=request.target_owner_id,
-                trace=TraceInfo(parent.trace.trace_id, parent.event_id),
-                payload=request.payload,
-                metadata=metadata
             ),
-            None
+            controls_flow=registration.spec.controls_flow,
         )
     
     
-    @staticmethod
-    def _may_publish(
-        registration: HandlerRegistration, event_type: str, event_owner: str
-    ) -> bool:
-        """检查 Handler 是否允许发布指定类型的事件"""
+    def _enqueue_all(self, envelopes: tuple[EventEnvelope, ...]) -> None:
+        """将事件列表加入队列"""
+        for envelope in envelopes:
+            self._queue.put_nowait(envelope)
+    
+    
+    async def _invoke(
+        self,
+        registration: HandlerRegistration,
+        flow: EventFlow,
+    ) -> tuple[EventEnvelope, bool, tuple[EventEnvelope, ...]] | None:
+        """调用事件处理器并返回结果"""
         
-        if event_owner == registration.spec.owner_id:
-            return True
-        return any(
-            event_pattern_matches(pattern, event_type)
-            for pattern in registration.spec.publish_patterns
+        timeout = registration.spec.timeout
+        if timeout is None:
+            timeout = (
+                self.flow_control_timeout 
+                if registration.spec.controls_flow 
+                else self.default_handler_timeout
+            )
+        try:
+            return await asyncio.wait_for(
+                self._invoke_and_commit(registration, flow),
+                timeout=timeout,
+            )
+        except TimeoutError:
+            self.logger.warning(
+                "Event handler timed out after %.1f seconds: %s (owner=%s)",
+                timeout,
+                registration.spec.handler_id,
+                registration.spec.owner_id,
+            )
+        except asyncio.CancelledError:
+            flow._discard()
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Error in event handler %s (owner=%s): %s",
+                registration.spec.handler_id,
+                registration.spec.owner_id,
+                e,
+            )
+        flow._discard()
+        return None
+        
+    
+    @staticmethod
+    async def _invoke_and_commit(
+        registration: HandlerRegistration,
+        flow: EventFlow,
+    ) -> tuple[EventEnvelope, bool, tuple[EventEnvelope, ...]]:
+        """调用事件处理器并提交结果"""
+        await registration.handler(flow)
+        return flow._commit()
+    
+    
+    def _validate_envelope(self, envelope: EventEnvelope) -> EventSpec:
+        spec = self.registry.event_spec(envelope.event_type)
+        if spec is None:
+            raise EventError(
+                "event_not_registered",
+                f"Event is not registered: {envelope.event_type}",
+            )
+        self._validate_payload(spec, envelope.payload)
+        return spec
+    
+    
+    @staticmethod
+    def _validate_payload(spec: EventSpec, payload: object) -> None:
+        """验证 payload 是否符合 event 定义"""
+        if spec.payload_type is not None and not isinstance(payload, spec.payload_type):
+            raise EventError(
+                "payload_invalid",
+                f"Payload type does not match {spec.event_type}.",
+                {
+                    "expected": spec.payload_type.__name__,
+                    "actual": type(payload).__name__,
+                },
+            )
+    
+    
+    def _build_derived(
+        self,
+        parent: EventEnvelope,
+        event_type: str,
+        payload: object,
+        metadata: Mapping[str, object] | None,
+        *,
+        source_owner_id: str,
+    ) -> EventEnvelope:
+        """创建派生事件"""
+        
+        spec = self.registry.event_spec(event_type)
+        if spec is None:
+            raise EventError(
+                "event_not_registered",
+                f"Derived event is not registered: {event_type}",
+            )
+        self._validate_payload(spec, payload)
+        child_metadata = dict(parent.metadata)
+        if metadata is not None:
+            child_metadata.update(metadata)
+        return EventEnvelope(
+            event_id=new_id("event"),
+            event_type=event_type,
+            occurred_at=utc_now(),
+            emitted_at=utc_now(),
+            source_owner_id=source_owner_id,
+            trace=TraceInfo(parent.trace.trace_id, parent.event_id),
+            payload=payload,
+            metadata=child_metadata,
         )

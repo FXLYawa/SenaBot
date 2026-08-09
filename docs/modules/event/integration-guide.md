@@ -1,17 +1,17 @@
 # Module 接入 Event 指南
 
-本指南展示一个 Module 接入 Event 所需的最小完整流程。
+本指南给出一个 Module 接入 Event 的最小完整流程。完整字段和分发规则见[公开 API](public-api.md)。
 
-## 1. 组织业务代码
+## 1. 组织代码
 
 ```text
 src/core/example/
-├── contracts.py     # Payload 契约
+├── contracts.py     # 本 Module 公开的 Payload
 ├── runtime.py       # 本 Module 的业务实现
-└── events.py        # Event 与本地 Runtime 的适配
+└── events.py        # Event 与 Runtime 的连接代码
 ```
 
-Payload 属于业务 Module，不应定义在 `core.event` 中。
+Payload 属于业务 Module，不定义在 `core.event`。`events.py` 可以调用本 Module 的 Runtime，但不能导入其他 Module 的 Runtime。
 
 ## 2. 定义 Payload
 
@@ -30,160 +30,163 @@ class ExampleCompleted:
     output: str
 ```
 
+Event 只检查可选的 Payload 类型。字段有效性、权限和业务约束仍由 example Module 负责。
+
 ## 3. 注册事件和 Handler
 
 ```python
 # core/example/events.py
-from core.event import EventHandlerResult, EventMode, ModuleEventAPI
+from core.event import EventFlow, ModuleEventAPI, RegistrationToken
 
 from .contracts import ExampleCompleted, ExampleRequest
 
 
-def register_example_events(events: ModuleEventAPI, runtime) -> None:
-    events.register(
-        "example.operation.requested",
-        payload_type=ExampleRequest,
-        mode=EventMode.UNICAST,
-    )
-    events.register(
-        "example.operation.completed",
-        payload_type=ExampleCompleted,
-    )
+def register_example_events(
+    events: ModuleEventAPI,
+    runtime,
+) -> list[RegistrationToken]:
+    tokens = [
+        events.register(
+            "example.operation.requested",
+            payload_type=ExampleRequest,
+        ),
+        events.register(
+            "example.operation.completed",
+            payload_type=ExampleCompleted,
+        ),
+    ]
 
-    async def handle_request(envelope):
-        request = envelope.payload
+    async def handle_request(flow: EventFlow) -> None:
+        request = flow.payload
         assert isinstance(request, ExampleRequest)
 
-        # Handler 只调用本 Module 的 Runtime。
         output = await runtime.execute(request.value)
-
-        return EventHandlerResult(
-            derived_events=[
-                # 发布派生事件
-                events.derived(
-                    "example.operation.completed",
-                    ExampleCompleted(output),
-                    target_owner_id=envelope.source_owner_id,
-                )
-            ]
+        flow.emit(
+            "example.operation.completed",
+            ExampleCompleted(output=output),
         )
 
-    events.subscribe(
-        "example.operation.requested",
-        handle_request,
-        handler_id="example.execute",
-        timeout=10.0,
+    tokens.append(
+        events.subscribe(
+            "example.operation.requested",
+            handle_request,
+            handler_id="example.execute",
+            timeout=10.0,
+        )
     )
+    return tokens
 ```
 
-`events.py` 是 Event 到本地 Runtime 的 Adapter。它可以依赖本 Module 的契约和 Runtime，但不得导入其他 Module 的 Runtime。
+这段代码声明了两种事件，并把 `handle_request` 注册为请求事件的处理者。Handler 只调用 example 自己的 Runtime；成功后通过 `flow.emit()` 产生完成事件，不返回结果对象。
+
+如果下一步需要其他 Module 完成，也应发布对方公开的事件：
+
+```python
+flow.emit("memory.query.requested", memory_request)
+```
+
+当前 Module 只依赖事件契约，不直接调用 `memory_runtime`。
 
 ## 4. 在组合根安装
 
-组合根是应用启动时创建对象和连接依赖的位置：
+组合根通常是应用启动函数或 bootstrap 模块。它集中创建 Bus、Runtime 和 Module API，再把它们连接起来；它只负责装配，不处理业务。
 
 ```python
 from core.event import EventBus, EventClient, ModuleEventAPI
 
+from core.example.events import register_example_events
+
 
 bus = EventBus()
 
-example_events = ModuleEventAPI.create(bus, "example")
-register_example_events(example_events, example_runtime)
+example_events = ModuleEventAPI(bus, "example")
+example_tokens = register_example_events(example_events, example_runtime)
 
-web_client = EventClient(
-    bus,
-    owner_id="adapter.web",
-    publish_patterns=("example.operation.requested",),
-)
+web_events = EventClient(bus, "adapter.web")
+
+await bus.start()
 ```
 
-EventBus 不应随着 Module 数量增加而修改。组合根可以认识各 Module 以完成装配，但不处理业务，也不把整个依赖容器交给业务代码。
+新增 Module 时只增加它的注册函数和装配代码，不修改 EventBus。
 
-## 5. 从入口发布
+## 5. 发布事件
 
 ```python
-result = await web_client.publish(
+await web_events.publish(
     "example.operation.requested",
-    ExampleRequest("hello"),
-    target_owner_id="example",
-)
-
-if result.errors:
-    for error in result.errors:
-        logger.warning("event failed: %s", error.code)
-```
-
-入口使用宿主注入的 `EventClient`，不要手工填写 `source_owner_id`。
-
-## 6. 跨 Module 通信
-
-不要直接调用其他 Module：
-
-```python
-# 错误
-result = await memory_runtime.query(request)
-```
-
-改为声明派生事件：
-
-```python
-return EventHandlerResult(
-    derived_events=[
-        events.derived(
-            "memory.query.requested",
-            request,
-            target_owner_id="memory",
-        )
-    ]
+    ExampleRequest(value="hello"),
+    metadata={"channel": "web"},
 )
 ```
 
-Memory Module 注册自己的 Handler、调用自己的 Runtime，并按需要发布结果事件。EventBus 不需要增加路由分支。
+Client 会填写 source、ID、时间和 trace。不要手工构造这些可信字段。
 
-## 7. 命名和 Handler 选择
+`publish()` 表示“事件已经校验并进入队列”，不表示业务处理已经完成，也不返回 Handler 结果。
 
-事件名推荐使用 `<domain>.<object>.<state-or-action>`：
+## 6. 只在必要时控制事件流
 
-```text
-body.input.received
-memory.query.requested
-memory.query.completed
-```
-
-- 业务处理使用 Consumer；
-- 日志、指标和审计使用 Observer；
-- 同一事件进入主处理前确实需要规范化 Payload 时才使用 Transformer；
-- 事件类型发生变化时使用派生事件，不使用 Transformer 充当路由器。
-
-owner 使用稳定的 Module 或 Adapter 名称，不要包含用户、Session 或实例 ID。
-
-## 8. 生命周期
-
-需要逐项卸载时保存注册 Token：
+普通 Handler 可以并发执行，适合互不依赖的业务处理。如果某个 Handler 必须先规范化 Payload 或决定是否继续传播，再使用 `controls_flow=True`：
 
 ```python
-token = events.subscribe(...)
-await token.unregister()
+async def normalize(flow: EventFlow) -> None:
+    request = flow.payload
+    assert isinstance(request, ExampleRequest)
+
+    value = request.value.strip()
+    if not value:
+        flow.stop_propagation()
+        return
+
+    flow.replace_payload(ExampleRequest(value=value))
+
+
+events.subscribe(
+    "example.operation.requested",
+    normalize,
+    handler_id="example.normalize",
+    priority=10,
+    controls_flow=True,
+)
 ```
 
-通常由组合根按 owner 清理：
+Bus 会等待这个 Handler，再启动排在它后面的处理器。它的修改只影响尚未启动的 Handler；超时或异常时，修改和派生事件都会被丢弃。
+
+## 7. 后台任务和卸载
+
+EventFlow 只在当前 Handler 执行期间有效。后台任务需要延续事件链时，保存父信封并使用注入的 Client：
 
 ```python
+parent = flow.envelope
+
+async def background_work() -> None:
+    completed = await runtime.execute_later()
+    await example_events.emit(
+        parent,
+        "example.operation.completed",
+        completed,
+    )
+```
+
+Module 卸载时可以逐项注销 Token，也可以按 owner 清理：
+
+```python
+for token in example_tokens:
+    await token.unregister()
+
+# 或者
 await bus.unregister_owner("example")
 ```
 
-停止顺序应是：停止新输入、处理必要的在途调用、注销 owner、释放 Runtime 资源。
+应用关闭顺序是：停止外部输入，排空并停止 Bus，注销 owner，最后释放 Runtime。不要先关闭 Runtime，否则在途 Handler 可能访问已经释放的资源。
 
-## 9. 接入检查
+## 8. 接入检查
 
-- [ ] Payload 定义在所属业务 Module；
-- [ ] 事件和 Handler 通过 `ModuleEventAPI` 动态注册；
-- [ ] Handler 只调用本 Module Runtime；
-- [ ] 跨 Module 操作使用派生事件；
-- [ ] 发布入口使用绑定 owner 的 `EventClient`；
-- [ ] 调用方检查 `EventDispatchResult.errors`；
-- [ ] owner 停止时完成注销；
-- [ ] 新增事件不需要修改 `core.event`。
-
-字段、分发模式和错误码见[公开 API](public-api.md)。
+- [ ] Payload 定义在所属 Module；
+- [ ] 事件与 Handler 通过 ModuleEventAPI 注册；
+- [ ] Handler 签名为 `async (EventFlow) -> None`；
+- [ ] Handler 只调用本 Module 函数和类；
+- [ ] 跨 Module 派生操作使用 `flow.emit()`；
+- [ ] 发布入口使用绑定 owner 的 Client；
+- [ ] 不把 `publish()` 当作业务结果接口；
+- [ ] 只有必要的 Handler 使用流控制；
+- [ ] 关闭时先排空事件，再释放 Runtime。
