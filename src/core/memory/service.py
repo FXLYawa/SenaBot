@@ -1,19 +1,30 @@
-from uuid import uuid4
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from . import models
-from .models import MemoryQueryCriteria
-from .contracts import MemoryWriteRequest,MemoryQueryRequest,MemoryQueryResult,MemoryWriteResult
-from .protocols import MemoryRepositoryProtocol
+from .contracts import MemoryQueryRequest, MemoryQueryResult, MemoryWriteRequest, MemoryWriteResult
+from .models import (
+    MemoryCandidate,
+    MemoryExtractionContext,
+    MemoryExtractionInput,
+    MemoryExtractionMessage,
+    MemoryQueryCriteria,
+)
+from .protocols import MemoryExtractorProtocol, MemoryRepositoryProtocol
+
 
 class MemoryService:
     """Memory的业务处理类"""
 
-    def __init__(self,repository: MemoryRepositoryProtocol,):
+    def __init__(
+        self,
+        repository: MemoryRepositoryProtocol,
+        extractor: MemoryExtractorProtocol | None = None,
+    ):
         self.repository = repository
+        self.extractor = extractor
 
-    async def query(self,request:MemoryQueryRequest) -> MemoryQueryResult:
-
+    async def query(self, request: MemoryQueryRequest) -> MemoryQueryResult:
         criteria = MemoryQueryCriteria(
             query_text=request.query_text,
             user_id=request.user_id,
@@ -31,8 +42,7 @@ class MemoryService:
             memories=memories,
         )
 
-    async def write(self,request: MemoryWriteRequest) -> MemoryWriteResult:
-
+    async def write(self, request: MemoryWriteRequest) -> MemoryWriteResult:
         # 检查相同操作是否已经执行
         existing_memory = await self.repository.find_by_operation_id(
             request.operation_id
@@ -47,10 +57,8 @@ class MemoryService:
                 memory_id=existing_memory.memory_id,
             )
 
-        existing_memory = (
-            await self.repository.find_by_source_event_id(
-                request.source_event_id
-            )
+        existing_memory = await self.repository.find_by_source_event_id(
+            request.source_event_id
         )
 
         if existing_memory is not None:
@@ -78,7 +86,6 @@ class MemoryService:
             metadata={},
         )
 
-
         saved_memory = await self.repository.save(memory)
 
         return MemoryWriteResult(
@@ -89,3 +96,24 @@ class MemoryService:
             memory_id=saved_memory.memory_id,
         )
 
+    async def extract(
+        self,
+        input_data: MemoryExtractionInput,
+        *,
+        summary: str | None,
+        recent_messages: list[MemoryExtractionMessage],
+    ) -> list[MemoryCandidate]:
+        """
+        提取记忆阶段的主链路实现
+        """
+        if self.extractor is None:
+            raise RuntimeError("memory extractor is not configured")
+
+        context = MemoryExtractionContext(
+            new_messages=input_data.messages,
+            recent_messages=recent_messages,
+            summary=summary,
+        )
+
+        # 调用LLM提取器的extract实现,得到最后的输出结果
+        return await self.extractor.extract(context)
