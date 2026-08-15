@@ -107,6 +107,7 @@ class ModuleEventAPI(EventClient):
         priority: int = 100,
         timeout: float | None = None,
         controls_flow: bool = False,
+        max_attempts: int = 1,
     ) -> RegistrationToken:
         """注册事件处理器"""
         
@@ -118,6 +119,7 @@ class ModuleEventAPI(EventClient):
                 priority=priority,
                 timeout=timeout,
                 controls_flow=controls_flow,
+                 max_attempts=max_attempts,
             ),
             handler,
         )
