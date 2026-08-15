@@ -33,7 +33,7 @@ class CompactionInput:
 class ContextCompressor(Protocol):
     """可选的语义摘要策略；无法生成完整摘要时返回 ``None``。"""
 
-    async def compress(self, compaction_input: CompactionInput) -> str | None: ...
+    async def compress(self, input: CompactionInput) -> str | None: ...
 
     
 @dataclass(frozen=True, slots=True)
@@ -44,11 +44,6 @@ class CompactionRequestData:
     input: CompactionInput # 需要被压缩的上下文输入
     source_summary_ids: tuple[str, ...] = () # 参与本次压缩的原始摘要 ID 列表
     
-    
-class ContextCompressor(Protocol):
-    """上下文压缩器以及对应的压缩策略, 无法生成完整摘要时返回None"""
-    
-    async def compress(self, input: CompactionInput) -> str | None: ...
     
     
 class LLMCompressor:
