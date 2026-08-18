@@ -7,10 +7,6 @@ from collections.abc import Awaitable, Callable
 
 from websockets.asyncio.server import Server, ServerConnection, serve
 
-_CONNECTION_IN_USE_CODE = 1013
-_CONNECTION_IN_USE_REASON = "Desktop connection already active"
-
-
 class WebSocketConnector:
     """运行只允许一个 active browser connection 的本地 WebSocket 服务。"""
 
@@ -57,8 +53,8 @@ class WebSocketConnector:
         """拒绝第二连接，并把 active connection 的文本帧交给上层。"""
         if self._active_connection is not None:
             await connection.close(
-                code=_CONNECTION_IN_USE_CODE,
-                reason=_CONNECTION_IN_USE_REASON,
+                code=1013, # _CONNECTION_IN_USE_CODE
+                reason="Desktop connection already active",
             )
             return
 
