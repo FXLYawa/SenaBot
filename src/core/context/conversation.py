@@ -18,6 +18,7 @@ from core.context.contracts import (
     ContextPreparedEventData,
     ContextRestoreRequestData,
     ContextRestoreResultEventData,
+    ContextRestoreStatus,
     ContextSnapshot,
 )
 from core.context.entry_appender import EntryAppender
@@ -124,11 +125,11 @@ class ConversationFlow:
                 "context_restore_invalid",
                 "Context restore returned a mismatched session identity.",
             )
-        if result.status == "failed":
+        if result.status == ContextRestoreStatus.FAILED:
             return cast(ContextErrorInfo, result.error)
 
         if not self._store.is_loaded(session_id):
-            if result.status == "completed":
+            if result.status == ContextRestoreStatus.COMPLETED:
                 installed = self._store.install_conversation_snapshot(
                     cast(ContextSnapshot, result.snapshot),
                     scope,

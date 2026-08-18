@@ -242,11 +242,13 @@ Level 1 只返回 `entries`，更高层只返回 `summaries`。
 |---|---|---|---|
 | `operation_id` | `str` | 必填 | 对应恢复请求 |
 | `session_id` | `str` | 必填 | 对应 Session |
-| `status` | `str` | 必填 | `completed`、`not_found` 或 `failed` |
+| `status` | `ContextRestoreStatus` | 必填 | `COMPLETED`、`NOT_FOUND` 或 `FAILED` |
 | `snapshot` | `ContextSnapshot \| None` | `None` | `completed` 时必填 |
 | `error` | `ContextErrorInfo \| None` | `None` | `failed` 时必填 |
 
 三种 status 的数据形状互斥，`not_found` 不携带 snapshot 或 error。
+
+`ContextRestoreStatus` 是字符串枚举，序列化值分别为 `completed`、`not_found` 和 `failed`。调用方应使用枚举成员构造和判断恢复结果。
 
 ### `ContextStateChangedEventData`
 

@@ -131,7 +131,7 @@ Context 只保存进程内状态。持久化 Module 订阅恢复请求和状态�
 收到 `context.restore.requested` 后，按 `session_id` 查询并返回一个终态：
 
 ```python
-from core.context.contracts import ContextRestoreResultEventData
+from core.context.contracts import ContextRestoreResultEventData, ContextRestoreStatus
 
 
 async def handle_restore(flow: EventFlow) -> None:
@@ -141,7 +141,11 @@ async def handle_restore(flow: EventFlow) -> None:
     result = ContextRestoreResultEventData(
         operation_id=request.operation_id,
         session_id=request.session_id,
-        status="not_found" if snapshot is None else "completed",
+        status=(
+            ContextRestoreStatus.NOT_FOUND
+            if snapshot is None
+            else ContextRestoreStatus.COMPLETED
+        ),
         snapshot=snapshot,
     )
     flow.emit("context.restore.resolved", result)

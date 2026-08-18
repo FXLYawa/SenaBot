@@ -135,26 +135,34 @@ class ContextRestoreRequestData:
     session_id: str # 会话ID
     
     
+class ContextRestoreStatus(StrEnum):
+    """Context 冷恢复的状态"""
+    COMPLETED = "completed"
+    NOT_FOUND = "not_found"
+    FAILED = "failed"
+    
+    
 @dataclass(frozen=True, slots=True)
 class ContextRestoreResultEventData:
     """上下文恢复响应数据"""
     
     operation_id: str # 恢复操作唯一ID
     session_id: str # 会话ID
-    status: str # 恢复状态，completed/failed/not_found
+    status: ContextRestoreStatus # 恢复状态，completed/failed/not_found
     snapshot: ContextSnapshot | None = None # 会话上下文快照, 用于恢复成功时提供上下文信息
     error: ContextErrorInfo | None = None # 恢复失败时的错误信息
     
     def __post_init__(self) -> None:
         """在契约边界保证恢复结果只有一种明确终态"""
-        if self.status not in {"completed", "not_found", "failed"}:
-            raise ValueError(f"unsupported context restore status: {self.status}")
-        if self.status == "completed":
+        if not isinstance(self.status, ContextRestoreStatus):
+            raise TypeError("status must be ContextRestoreStatus")
+        
+        if self.status == ContextRestoreStatus.COMPLETED:
             if self.snapshot is None or self.error is not None:
                 raise ValueError("completed restore requires only a snapshot")
             if self.snapshot.session.session_id != self.session_id:
                 raise ValueError("restored snapshot session does not match result")
-        elif self.status == "failed":
+        elif self.status == ContextRestoreStatus.FAILED:
             if self.error is None or self.snapshot is not None:
                 raise ValueError("failed restore requires only an error")
         elif self.snapshot is not None or self.error is not None:

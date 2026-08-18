@@ -9,6 +9,7 @@ from core.context.contracts import (
     ContextErrorInfo,
     ContextRestoreRequestData,
     ContextRestoreResultEventData,
+    ContextRestoreStatus,
     ContextSnapshot,
     ContextStateChangedEventData,
     ContextWorkFailedEventData,
@@ -69,14 +70,14 @@ class WorkSessionFlow:
             )
             return
         # 处理恢复结果: 失败则返回错误, 已加载则直接返回, 完成则安装快照并返回
-        if result.status == "failed":
+        if result.status == ContextRestoreStatus.FAILED:
             error = cast(ContextErrorInfo, result.error)
             self._fail(flow, request, error.code, error.message)
             return
         if self._store.is_loaded(result.session_id):
             self._ready(flow, request)
             return
-        if result.status == "completed":
+        if result.status == ContextRestoreStatus.COMPLETED:
             installed = self._store.install_work_snapshot(
                 snapshot=cast(ContextSnapshot, result.snapshot),
                 purpose=request.purpose,
