@@ -1,0 +1,16 @@
+:root {
+  --color-stage: #ffffff;
+  --color-stage-deep: #ffffff;
+  --color-panel: rgba(255, 255, 255, 0.97);
+  --color-panel-solid: #ffffff;
+  --color-text: #171717;
+  --color-accent: #171717;
+  --color-accent-soft: #333333;
+  --color-online: #4f755c;
+  --color-muted: #737373;
+  --color-danger: #a33a34;
+  --font-display: "LXGW WenKai", "STKaiti", "KaiTi", serif;
+  --font-body: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --font-utility: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  color-scheme: light;
+}
