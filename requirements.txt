@@ -1,0 +1,2 @@
+# Adapter 层唯一第三方依赖（MVP）：本地 WebSocket 服务端
+websockets>=13
