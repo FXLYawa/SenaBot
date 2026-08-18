@@ -56,7 +56,6 @@ class SessionRecord:
     # 下面几个主要用于生成session_id时的来源信息，方便追溯和对应
     conversation_scope: ConversationScope | None = None # session 对应的 conversation 来源
     work_id: str | None = None # Session 对应的work agent id
-    parent_session_id: str | None = None # 派生Session关联的父Session标识
     
     @property
     def is_closed(self) -> bool:
@@ -131,7 +130,6 @@ class ContextSnapshot:
 class ContextRestoreRequestData:
     """上下文恢复请求数据"""
     
-    operation_id: str # 恢复操作唯一标识，避免重复恢复
     session_id: str # 会话ID
     
     
@@ -146,7 +144,6 @@ class ContextRestoreStatus(StrEnum):
 class ContextRestoreResultEventData:
     """上下文恢复响应数据"""
     
-    operation_id: str # 恢复操作唯一ID
     session_id: str # 会话ID
     status: ContextRestoreStatus # 恢复状态，completed/failed/not_found
     snapshot: ContextSnapshot | None = None # 会话上下文快照, 用于恢复成功时提供上下文信息
@@ -201,7 +198,6 @@ class ContextWorkRequestData:
     operation_id: str  # AgentRun 使用的操作 ID。
     work_id: str  # 稳定业务身份（主要是agent层的）
     purpose: str  # Work Session 的目的
-    parent_session_id: str | None = None  # 可选来源 Conversation Session。
 
 
 @dataclass(frozen=True, slots=True)

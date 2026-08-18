@@ -12,7 +12,7 @@
 | 持久化 Context | 使用 restore 和 state changed 事件 |
 | 展开历史摘要 | 当前暂不可用 |
 
-发布接口不返回业务结果。需要结果的请求使用 `operation_id` 关联后续成功或失败事件。
+发布接口不返回业务结果。Work、History 等需要恢复具体调用方执行的请求使用 `operation_id` 关联后续成功或失败事件；Session 冷恢复直接使用稳定的 `session_id` 关联。
 
 ## 2. 基本概念
 
@@ -129,7 +129,6 @@ Level 1 直接覆盖 Entry，不能包含 `source_summary_ids`；更高层必须
 | `operation_id` | `str` | 必填 | 请求方生成的关联 ID |
 | `work_id` | `str` | 必填 | 稳定业务 ID |
 | `purpose` | `str` | 必填 | 开放用途，例如 `task`、`diary` |
-| `parent_session_id` | `str \| None` | `None` | 可选来源 Conversation Session |
 
 `purpose` 会去除空白并转为小写，不能为空或 `conversation`。同一 `(purpose, work_id)` 始终对应同一 Session。
 
@@ -214,7 +213,6 @@ Level 1 只返回 `entries`，更高层只返回 `summaries`。
 | `purpose` | `str` | `conversation` | Session 用途 |
 | `conversation_scope` | `ConversationScope \| None` | `None` | Conversation 身份来源 |
 | `work_id` | `str \| None` | `None` | Work 身份来源 |
-| `parent_session_id` | `str \| None` | `None` | 可选父 Session |
 
 `is_closed` 由 `closed_at` 判断。
 
@@ -233,14 +231,12 @@ Level 1 只返回 `entries`，更高层只返回 `summaries`。
 
 | 字段 | 类型 | 含义 |
 |---|---|---|
-| `operation_id` | `str` | 本次恢复操作 ID |
 | `session_id` | `str` | 要恢复的 Session |
 
 `ContextRestoreResultEventData`：
 
 | 字段 | 类型 | 默认值 | 含义 |
 |---|---|---|---|
-| `operation_id` | `str` | 必填 | 对应恢复请求 |
 | `session_id` | `str` | 必填 | 对应 Session |
 | `status` | `ContextRestoreStatus` | 必填 | `COMPLETED`、`NOT_FOUND` 或 `FAILED` |
 | `snapshot` | `ContextSnapshot \| None` | `None` | `completed` 时必填 |
@@ -248,7 +244,10 @@ Level 1 只返回 `entries`，更高层只返回 `summaries`。
 
 三种 status 的数据形状互斥，`not_found` 不携带 snapshot 或 error。
 
-`ContextRestoreStatus` 是字符串枚举，序列化值分别为 `completed`、`not_found` 和 `failed`。调用方应使用枚举成员构造和判断恢复结果。
+同一进程中，一个 `session_id` 同时最多存在一个冷恢复槽位。恢复期间后续到达的 Conversation 输入或 Work 请求加入该槽位，Data 只执行一次读取；结果到达后由 Context 统一恢复所有等待者。
+
+`ContextRestoreStatus` 是字符串枚举，序列化值分别为 `completed`、`not_found`
+和 `failed`。调用方应使用枚举成员构造和判断恢复结果，避免散落字符串常量。
 
 ### `ContextStateChangedEventData`
 

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from core.context.body import BodyInputEventData
-from core.context.common import new_id, ConversationScope
+from core.context.common import ConversationScope
 from core.context.contracts import (
     ContextActorRef,
     ContextActorType,
@@ -40,7 +40,6 @@ class _PendingInput:
 class _PendingRestore:
     """同一 Conversation Session 共享的一次恢复及有序输入批次。"""
 
-    operation_id: str
     scope: ConversationScope
     inputs: list[_PendingInput]
 
@@ -77,58 +76,43 @@ class ConversationFlow:
         if pending is not None:
             pending.inputs.append(pending_input)
             return
-        # 首次请求恢复时，生成唯一 operation_id 以便 Data 返回结果时匹配原始请求
-        operation_id = new_id("op_context_restore")
+        # 首次请求恢复时，记录 ConversationScope 以便后续校验恢复结果，并发起恢复请求
         self._restoring[session_id] = _PendingRestore(
-            operation_id,
             payload.conversation_scope,
             [pending_input],
         )
         flow.emit(
             "context.restore.requested",
-            ContextRestoreRequestData(operation_id, session_id),
+            ContextRestoreRequestData(session_id),
         )
 
     async def handle_restore(self, flow: EventFlow) -> None:
         """恢复或初始化 Conversation Session，然后继续原输入流程。"""
 
+        # 解析恢复结果并匹配原始请求
         result: ContextRestoreResultEventData = flow.payload
-        matched = next(
-            (
-                (session_id, pending)
-                for session_id, pending in self._restoring.items()
-                if pending.operation_id == result.operation_id
-            ),
-            None,
-        )
-        if matched is None:
+        pending = self._restoring.pop(result.session_id, None)
+        if pending is None:
             return
-        session_id, pending = matched
-        self._restoring.pop(session_id)
 
-        error = self._apply_restore_result(result, session_id, pending.scope)
+        # 校验恢复结果并应用到 Conversation Session，返回错误则通知所有调用方
+        error = self._apply_restore_result(result, pending.scope)
         if error is not None:
-            await self._fail_pending(pending, session_id, error)
+            await self._fail_pending(pending, result.session_id, error)
             return
-        await self._resume_pending_inputs(pending, session_id)
+        await self._resume_pending_inputs(pending, result.session_id)
 
     def _apply_restore_result(
         self,
         result: ContextRestoreResultEventData,
-        session_id: str,
         scope: ConversationScope,
     ) -> ContextErrorInfo | None:
         """校验并应用 Data 恢复结果，不发布后续事件。"""
 
-        if result.session_id != session_id:
-            return ContextErrorInfo(
-                "context_restore_invalid",
-                "Context restore returned a mismatched session identity.",
-            )
         if result.status == ContextRestoreStatus.FAILED:
             return cast(ContextErrorInfo, result.error)
 
-        if not self._store.is_loaded(session_id):
+        if not self._store.is_loaded(result.session_id):
             if result.status == ContextRestoreStatus.COMPLETED:
                 installed = self._store.install_conversation_snapshot(
                     cast(ContextSnapshot, result.snapshot),

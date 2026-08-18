@@ -40,7 +40,7 @@ flowchart LR
 4. `entry_appender.py`：理解追加后的共同动作；
 5. `store.py` 与 `state.py`：理解状态边界和不变量；
 6. `window.py`、`compaction.py`、`compression.py`：理解滚动压缩；
-7. `work_session.py`：理解独立任务上下文。
+7. `work_session.py`：理解独立 Work Context。
 
 如果只排查某条事件链，可以从 `events.py` 找到对应 Handler，再沿调用关系往下看。
 
@@ -126,7 +126,7 @@ Summary 表示当前工作窗口如何用一个摘要节点代替一段旧内容
 | `context.restore.resolved` | Conversation 与 Work Flow | 恢复各自等待的请求 |
 | `context.compaction.requested` | `CompactionFlow.handle_request` | 执行一次后台压缩 |
 
-Conversation 和 Work Flow 都订阅恢复结果，但只接收自己保存过的 `operation_id`。历史事件已经注册，读取 Handler 尚未实现。
+Conversation 和 Work Flow 都订阅恢复结果，但只处理自己按 `session_id` 保存的待恢复槽位。历史事件已经注册，读取 Handler 尚未实现。
 
 ### 已加载 Session
 
@@ -142,7 +142,7 @@ Conversation 和 Work Flow 都订阅恢复结果，但只接收自己保存过�
 
 ### 冷恢复
 
-程序启动后，Store 中还没有某个 Session 的进程内状态。第一次收到该 Session 的输入时，`ConversationFlow` 在 `_restoring` 中保存一次待恢复操作，其中包括恢复 `operation_id`、Conversation Scope 和等待处理的输入列表，然后发布 `context.restore.requested`。
+程序启动后，Store 中还没有某个 Session 的进程内状态。第一次收到该 Session 的输入时，`ConversationFlow` 按 `session_id` 在 `_restoring` 中保存 Conversation Scope 和等待处理的输入列表，然后发布 `context.restore.requested`。
 
 恢复完成前再次到达同一 Session 的输入，只追加到这份列表，不会重复发起恢复。收到 `context.restore.resolved` 后，Flow 先安装快照或初始化 Session，再按输入进入列表的顺序继续处理。
 
@@ -156,21 +156,16 @@ Conversation 和 Work Flow 都订阅恢复结果，但只接收自己保存过�
 
 Work Session 用于任务、日记或其他需要独立上下文的长期工作。它不是一次函数调用产生的临时缓存。
 
-请求方发布 `context.work.requested`，携带自己的 `operation_id`、稳定 `work_id`、开放的 `purpose` 和可选 `parent_session_id`。`WorkSessionFlow` 规范化身份并计算 Session ID，已加载时直接发布 ready，未加载时先请求恢复。
+请求方发布 `context.work.requested`，携带自己的 `operation_id`、稳定 `work_id` 和开放的 `purpose`。`WorkSessionFlow` 规范化身份并计算 Session ID，已加载时直接发布 ready，未加载时先请求恢复。
 
-流程中有两种关联 ID：
-
-- 请求方的 `operation_id`：用于匹配 `work.ready` 或 `work.failed`；
-- Context 创建的恢复 operation ID：只用于匹配一次 `restore.resolved`。
-
-前者属于业务请求，后者只用于 Context 与持久化模块之间的恢复。恢复后：
+`session_id` 用于合并 Context 与 Data 之间的冷恢复：同一 Work Session 在恢复期间只读取一次持久化数据，后续请求进入同一个等待列表。请求方自己的 `operation_id` 仍用于匹配 `work.ready` 或 `work.failed`；一次恢复完成后，Context 会使用每个请求原有的 `operation_id` 分别恢复对应 AgentRun。恢复后：
 
 - 快照存在且身份一致时安装快照；
 - 快照不存在时创建新的 Work Session；
 - 首次创建时发布 `context.state.changed`；
 - 最终发布 `context.work.ready` 或 `context.work.failed`。
 
-同一 Work Session 再次请求时，`parent_session_id` 必须保持一致。
+Work Session 不绑定来源 Conversation Session。同一长期 Work 可以从不同 Conversation Session 继续；本次请求来源和投递位置由 AgentRun 等调用方维护。
 
 ## 6. 追加、Store 与状态
 
@@ -270,7 +265,7 @@ Compressor 调用包含 `await`，等待期间同一 Session 仍可追加 Entry�
 
 已加载 Session 的后续事件直接通过当前 `EventFlow` 发布。冷恢复完成时原 Flow 已经结束，所以 `_PendingInput` 保存原始 Envelope，再通过 `EventClient.emit(parent, ...)` 延续各自的 trace 和父子关系。
 
-`operation_id` 只匹配一次异步请求和结果，不替代 Event 的 trace。恢复结果没有匹配的 operation 时，说明它不属于当前 Flow、已经过期或重复到达，Handler 直接忽略。
+`session_id` 同时标识持久化对象和进程内恢复槽位。恢复结果没有对应槽位时，说明当前 Flow 没有等待该 Session，或者结果已经重复到达，Handler 直接忽略。Work 请求自己的 `operation_id` 只关联 Agent 的继续执行，不参与 Data 冷恢复，也不替代 Event trace。
 
 ### 失败如何处理
 

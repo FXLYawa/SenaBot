@@ -42,7 +42,6 @@ class ContextStateStore:
         self,
         purpose: str,
         work_id: str,
-        parent_session_id: str | None = None,
     ) -> tuple[ContextSnapshot, bool]:
         """确定性解析或创建 Work Session, 返回快照及本次是否创建。"""
 
@@ -57,11 +56,8 @@ class ContextStateStore:
                 session_id,
                 purpose=purpose,
                 work_id=work_id,
-                parent_session_id=parent_session_id,
             )
             self._sessions[session_id] = state
-        elif state.session.parent_session_id != parent_session_id:
-            raise ValueError("work session parent conflict")
         if state.session.is_closed:
             raise LookupError("session_closed")
         return state.snapshot(), created
@@ -101,7 +97,6 @@ class ContextStateStore:
         snapshot: ContextSnapshot,
         purpose: str,
         work_id: str,
-        parent_session_id: str | None,
     ) -> bool:
         """校验并安装 Data 返回的 Work Session 快照, 用于重启恢复"""
 
@@ -113,7 +108,6 @@ class ContextStateStore:
             != work_session_id(normalized_purpose, normalized_work_id)
             or session.purpose != normalized_purpose
             or session.work_id != normalized_work_id
-            or session.parent_session_id != parent_session_id
             or session.conversation_scope is not None
         ):
             return False
@@ -146,7 +140,6 @@ class ContextStateStore:
         purpose: str,
         conversation_scope: ConversationScope | None = None,
         work_id: str | None = None,
-        parent_session_id: str | None = None,
     ) -> SessionState:
         """构造一个已经解析稳定身份的新 Session 状态。"""
 
@@ -159,7 +152,6 @@ class ContextStateStore:
                 purpose=purpose,
                 conversation_scope=conversation_scope,
                 work_id=work_id,
-                parent_session_id=parent_session_id,
             ),
             0,
             [],

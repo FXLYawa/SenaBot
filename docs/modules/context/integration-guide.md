@@ -81,7 +81,6 @@ flow.emit(
         operation_id=operation_id,
         purpose="task",
         work_id=task_id,
-        parent_session_id=conversation_session_id,
     ),
 )
 ```
@@ -120,7 +119,8 @@ events.subscribe(
 )
 ```
 
-同一 `(purpose, work_id)` 会复用同一 Session。`parent_session_id` 在创建后不能改绑。
+同一 `(purpose, work_id)` 会复用同一 Session，不绑定请求来自哪个 Conversation Session。
+调用方应在 AgentRun 或自己的任务状态中保存本次交互来源和结果投递位置。
 
 ## 4. 接入持久化
 
@@ -139,7 +139,6 @@ async def handle_restore(flow: EventFlow) -> None:
     snapshot = await repository.load_context(request.session_id)
 
     result = ContextRestoreResultEventData(
-        operation_id=request.operation_id,
         session_id=request.session_id,
         status=(
             ContextRestoreStatus.NOT_FOUND
@@ -150,6 +149,8 @@ async def handle_restore(flow: EventFlow) -> None:
     )
     flow.emit("context.restore.resolved", result)
 ```
+
+恢复请求和结果直接用 `session_id` 关联。Context 会把同一 Session 恢复期间到达的 Conversation 输入或 Work 请求合并到一个等待槽位，因此 Data 不需要额外生成或回传恢复操作 ID。
 
 没有记录时使用 `not_found`；数据库或网络错误使用 `failed + ContextErrorInfo`。Context 会重新校验快照中的 Session 身份。
 

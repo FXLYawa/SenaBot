@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import cast
 
-from core.context.common import new_id
 from core.context.contracts import (
     ContextErrorInfo,
     ContextRestoreRequestData,
@@ -25,9 +24,9 @@ class WorkSessionFlow:
     """通过 Work 身份解析 Session, 在有需要时请求冷恢复并返回最终 Work Session 快照"""
 
     def __init__(self, store: ContextStateStore) -> None:
-        self._store = store # 
-        # restore operation_id 指向原始 Work 请求，业务关联仍使用请求自己的 operation_id。
-        self._pending: dict[str, ContextWorkRequestData] = {}
+        self._store = store
+        # Data 恢复按 Session 合并；列表中的 operation_id 仍分别对应各 AgentRun。
+        self._restoring: dict[str, list[ContextWorkRequestData]] = {}
 
     async def handle_request(self, flow: EventFlow) -> None:
         """解析 Work Session; 尚未加载时请求 Data 冷恢复"""
@@ -44,55 +43,61 @@ class WorkSessionFlow:
             self._ready(flow, request)
             return
 
-        # 还未加载的 Work Session 需要请求冷恢复
-        restore_id = new_id("op_context_restore")
-        self._pending[restore_id] = request
+        # 同一 Work Session 恢复期间只读取一次 Data，其余请求加入等待列表。
+        pending = self._restoring.get(session_id)
+        if pending is not None:
+            pending.append(request)
+            return
+
+        self._restoring[session_id] = [request]
         flow.emit(
             "context.restore.requested",
-            ContextRestoreRequestData(restore_id, session_id),
+            ContextRestoreRequestData(session_id),
         )
 
     async def handle_restore(self, flow: EventFlow) -> None:
         """处理 Data 返回的 Work Session 冷恢复结果，并继续此前暂停 request 的 AgentRun"""
 
-        # 解析恢复结果并检查是否与原始请求匹配
+        # session_id 同时定位恢复槽位和 Store 中的唯一 Context。
         result: ContextRestoreResultEventData = flow.payload
-        request = self._pending.pop(result.operation_id, None)
-        if request is None:
+        pending = self._restoring.pop(result.session_id, None)
+        if pending is None:
             return
-        expected_id = work_session_id(request.purpose, request.work_id)
-        if result.session_id != expected_id:
-            self._fail(
-                flow,
-                request,
-                "work_restore_invalid",
-                "Work restore returned a mismatched session identity.",
-            )
-            return
-        # 处理恢复结果: 失败则返回错误, 已加载则直接返回, 完成则安装快照并返回
+
+        requests = tuple(pending)
+        anchor = requests[0]
+
+        # Data 失败属于整个 Session 恢复，所有等待请求收到各自的失败结果。
         if result.status == ContextRestoreStatus.FAILED:
             error = cast(ContextErrorInfo, result.error)
-            self._fail(flow, request, error.code, error.message)
+            for request in requests:
+                self._fail(flow, request, error.code, error.message)
             return
+
+        # 只有第一个恢复结果负责安装快照；NOT_FOUND 由首个 _ready 创建状态。
         if self._store.is_loaded(result.session_id):
-            self._ready(flow, request)
+            for request in requests:
+                self._ready(flow, request)
             return
         if result.status == ContextRestoreStatus.COMPLETED:
             installed = self._store.install_work_snapshot(
                 snapshot=cast(ContextSnapshot, result.snapshot),
-                purpose=request.purpose,
-                work_id=request.work_id,
-                parent_session_id=request.parent_session_id,
+                purpose=anchor.purpose,
+                work_id=anchor.work_id,
             )
             if not installed:
-                self._fail(
-                    flow,
-                    request,
-                    "work_restore_invalid",
-                    "Stored work context does not match the requested work identity.",
-                )
+                for request in requests:
+                    self._fail(
+                        flow,
+                        request,
+                        "work_restore_invalid",
+                        "Stored work context does not match the requested work identity.",
+                    )
                 return
-        self._ready(flow, request)
+
+        # 每个 Agent 请求仍使用自己的 operation_id 接收 ready/failed。
+        for request in requests:
+            self._ready(flow, request)
 
     def _ready(self, flow: EventFlow, request: ContextWorkRequestData) -> None:
         """解析最终 Work 状态并恢复等待中的 AgentRun。"""
@@ -102,7 +107,6 @@ class WorkSessionFlow:
             snapshot, created = self._store.resolve_work(
                 request.purpose,
                 request.work_id,
-                request.parent_session_id,
             )
         except (LookupError, ValueError) as exc:
             self._fail(flow, request, "work_session_unavailable", str(exc))
