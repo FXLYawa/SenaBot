@@ -20,6 +20,7 @@ from core.context.contracts import (
     ContextPreparedEventData,
     ContextRestoreRequestData,
     ContextRestoreResultEventData,
+    ContextRestoreStatus,
     ContextSnapshot,
     ContextStateChangedEventData,
     ContextWorkReadyEventData,
@@ -85,9 +86,8 @@ class ContextConversationChainTests(unittest.IsolatedAsyncioTestCase):
             flow.emit(
                 "context.restore.resolved",
                 ContextRestoreResultEventData(
-                    operation_id=request.operation_id,
                     session_id=request.session_id,
-                    status="not_found",
+                    status=ContextRestoreStatus.NOT_FOUND,
                 ),
             )
 
@@ -197,9 +197,8 @@ class ContextConversationChainTests(unittest.IsolatedAsyncioTestCase):
             flow.emit(
                 "context.restore.resolved",
                 ContextRestoreResultEventData(
-                    operation_id=request.operation_id,
                     session_id=request.session_id,
-                    status="completed",
+                    status=ContextRestoreStatus.COMPLETED,
                     snapshot=snapshot,
                 ),
             )
@@ -263,9 +262,8 @@ class ContextConversationChainTests(unittest.IsolatedAsyncioTestCase):
             flow.emit(
                 "context.restore.resolved",
                 ContextRestoreResultEventData(
-                    operation_id=request.operation_id,
                     session_id=request.session_id,
-                    status="failed",
+                    status=ContextRestoreStatus.FAILED,
                     error=ContextErrorInfo("storage_unavailable", "暂时无法读取"),
                 ),
             )
@@ -331,9 +329,8 @@ class ContextWorkSessionChainTests(unittest.IsolatedAsyncioTestCase):
             flow.emit(
                 "context.restore.resolved",
                 ContextRestoreResultEventData(
-                    operation_id=request.operation_id,
                     session_id=request.session_id,
-                    status="not_found",
+                    status=ContextRestoreStatus.NOT_FOUND,
                 ),
             )
 

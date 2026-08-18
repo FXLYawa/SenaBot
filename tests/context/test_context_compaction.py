@@ -19,6 +19,7 @@ from core.context.contracts import (
     ContextEntryType,
     ContextRestoreRequestData,
     ContextRestoreResultEventData,
+    ContextRestoreStatus,
     ContextStateChangedEventData,
     ContextWorkReadyEventData,
     ContextWorkRequestData,
@@ -101,9 +102,8 @@ class ContextCompactionChainTests(unittest.IsolatedAsyncioTestCase):
             flow.emit(
                 "context.restore.resolved",
                 ContextRestoreResultEventData(
-                    operation_id=request.operation_id,
                     session_id=request.session_id,
-                    status="not_found",
+                    status=ContextRestoreStatus.NOT_FOUND,
                 ),
             )
 
