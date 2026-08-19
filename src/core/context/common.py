@@ -31,6 +31,8 @@ class SceneType(StrEnum):
 
 
 class UserRole(StrEnum):
+    """用户在系统中的身份和角色"""
+    
     OWNER = "owner"
     OPERATOR = "operator"
     PRIVATE_USER = "private_user"
@@ -73,7 +75,7 @@ class SourceInfo:
 class SceneInfo:
     """平台无关的场景信息"""
     
-    scene_type: str  # 场景类型
+    scene_type: SceneType  # 场景类型
     scene_id: str  # 场景唯一标识
     scene_name: str  # 场景名称
     
