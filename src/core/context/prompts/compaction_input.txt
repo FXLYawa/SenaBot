@@ -1,0 +1,10 @@
+目标摘要层级：Level {target_level}
+
+前置参考上下文（只用于理解，不属于本次摘要覆盖范围）：
+{context_before}
+
+待归纳内容：
+{content}
+
+后置参考上下文（只用于理解，不属于本次摘要覆盖范围）：
+{context_after}
