@@ -1,4 +1,5 @@
 import json
+from .prompts.extraction import MEMORY_EXTRACTION_PROMPT
 
 from .models import (
     MemoryCandidate,
@@ -27,51 +28,27 @@ class LLMMemoryExtractor:
         return self._parse_response(response)
 
     def _build_prompt(
-        self,
-        context: MemoryExtractionContext,
+            self,
+            context: MemoryExtractionContext,
     ) -> str:
         """
-        负责将原始消息,最近m条消息,历史summary，捏合成prompt
-
+        负责将上下文填充到 Memory extraction prompt
         """
         summary = context.summary or "无"
 
-        recent_messages = self._format_messages(context.recent_messages)
-        new_messages = self._format_messages(context.new_messages)
+        recent_messages = self._format_messages(
+            context.recent_messages
+        )
 
-        return f"""
-你负责从当前的新消息中提取可能值得长期保存的用户信息。
+        new_messages = self._format_messages(
+            context.new_messages
+        )
 
-历史摘要和最近消息只用于帮助理解当前消息，
-不能直接作为本次新记忆的来源。
-
-要求：
-1. 只提取能够由当前新消息支持的信息。
-2. 每条记忆只表达一个独立事实。
-3. 不进行无依据推断。
-4. 没有值得记录的信息时返回空列表。
-5. 仅返回 JSON，不要输出其他内容。
-6. Assistant 的内容只能用于帮助理解用户消息，不得把 Assistant 的推测、建议或未经用户确认的信息作为用户事实提取。
-
-输出格式：
-{{
-  "memories": [
-    {{
-      "content": "..."
-    }}
-  ]
-}}
-
-历史摘要：
-{summary}
-
-最近消息：
-{recent_messages}
-
-当前新消息：
-{new_messages}
-""".strip()
-
+        return MEMORY_EXTRACTION_PROMPT.format(
+            summary=summary,
+            recent_messages=recent_messages,
+            new_messages=new_messages,
+        )
     def _format_messages(
         self,
         messages: list[MemoryExtractionMessage],

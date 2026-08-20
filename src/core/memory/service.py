@@ -25,6 +25,8 @@ class MemoryService:
         self.extractor = extractor
 
     async def query(self, request: MemoryQueryRequest) -> MemoryQueryResult:
+        """Memory查询记忆的函数,当前为简单实现,并不包含向量数据库查询"""
+
         criteria = MemoryQueryCriteria(
             query_text=request.query_text,
             user_id=request.user_id,
@@ -43,6 +45,8 @@ class MemoryService:
         )
 
     async def write(self, request: MemoryWriteRequest) -> MemoryWriteResult:
+        """Memory写入记忆,当前为简单写入JSON,并不包含向量数据库写入"""
+
         # 检查相同操作是否已经执行
         existing_memory = await self.repository.find_by_operation_id(
             request.operation_id
@@ -115,5 +119,4 @@ class MemoryService:
             summary=summary,
         )
 
-        # 调用LLM提取器的extract实现,得到最后的输出结果
         return await self.extractor.extract(context)
