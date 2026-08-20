@@ -58,7 +58,7 @@ Event 不得导入业务 Module，不解释 Payload，不做其他任何业务�
 
 公开字段见[公开 API](../../../docs/modules/event/public-api.md)。内部实现需要注意：EventEnvelope 只是浅不可变，Payload 和 metadata 内部对象不会被深拷贝；`with_payload()` 创建新信封，但复用其他字段。
 
-EventSpec 定义合法事件和可选 Payload 类型，类型校验仅使用 `isinstance`。HandlerSpec 定义匹配 pattern、priority、timeout 和 controls_flow。
+EventSpec 定义合法事件和可选 Payload 类型，类型校验仅使用 `isinstance`。HandlerSpec 定义匹配 pattern、priority、timeout、controls_flow 和 max_attempts。
 
 Registry 为查询、唯一性检查和注销维护以下索引：
 
@@ -199,6 +199,7 @@ _finished       Flow 是否已经提交或丢弃
 | 动作 | 暂存内容 | 限制 |
 |---|---|---|
 | `emit()` | 已验证的派生信封 | 所有 Handler 可用 |
+| `discard_emitted()` | 清除尚未提交的派生信封 | 所有活动中的 Flow 可用 |
 | `replace_payload()` | 新的当前信封 | 仅 controls_flow Handler |
 | `stop_propagation()` | 停止标记 | 仅 controls_flow Handler |
 
@@ -214,16 +215,17 @@ Flow 完成后不能继续使用。后台任务必须保存父 EventEnvelope，�
 
 ## 7. Handler、派生事件与错误
 
-Bus 把每次 Handler 调用当作独立的失败边界：一个 Handler 出错时，只丢弃它自己的 Flow，不影响同一事件的其他 Handler，也不让 worker 退出。
+Bus 把每次 Handler 调用当作独立的失败边界：一个 Handler 出错时，只丢弃它自己的 Flow，不影响同一事件的其他 Handler，也不让 worker 退出。`max_attempts` 大于 1 时，每次普通异常后都会从原始信封创建新的 Flow 重试，失败尝试暂存的派生事件不会进入队列。
 
 HandlerSpec.timeout 优先；未设置时，普通 Handler 使用 `default_handler_timeout`，流控制 Handler 使用 `flow_control_timeout`。
 
-`_invoke()` 的结果只有两种：
+`_invoke()` 的结果有三种：
 
 - Handler 正常返回：提交 Flow；
-- Handler 超时或抛出异常：记录日志并丢弃 Flow。
+- Handler 超时：记录日志并丢弃 Flow，不自动重试；
+- Handler 抛出普通异常：记录日志并丢弃当前 Flow，未达到 `max_attempts` 时使用新 Flow 重试。
 
-CancelledError 会在丢弃 Flow 后继续传播，因为它是 worker 关闭的一部分。不要把 BaseException 当成普通 Handler 失败捕获。
+CancelledError 会在丢弃 Flow 后继续传播，因为它是 worker 关闭的一部分。不要把 BaseException 当成普通 Handler 失败捕获。重试是 Handler 注册方显式选择的至少一次执行语义；具有外部副作用的 Handler 只有在操作具备幂等保证时才应启用。
 
 `_invoke()` 通过 `asyncio.wait_for()` 应用选定的超时。正常完成时返回 commit 数据；超时和普通异常分别记录日志，统一 discard 并返回内部 None。
 

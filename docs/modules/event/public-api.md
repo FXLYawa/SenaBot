@@ -95,6 +95,7 @@ EventEnvelope 是 Handler 收到的完整事件信封：
 | `priority` | `int` | `100` | 越小越早进入分发流程 |
 | `timeout` | `float \| None` | `None` | 调用超时秒数；`None` 使用 Bus 默认值 |
 | `controls_flow` | `bool` | `False` | 是否可以修改 Payload 或停止后续传播 |
+| `max_attempts` | `int` | `1` | 普通异常下的总执行次数；`1` 表示不重试 |
 
 同一 owner 内的 `handler_id` 不能重复。
 
@@ -107,6 +108,7 @@ EventFlow 是 Handler 在本次调用中的操作入口，由 Bus 创建，外�
 | `envelope` | 当前 Handler 看到的完整信封 |
 | `payload` | `envelope.payload` 的便捷访问 |
 | `emit(event_type, payload, *, metadata=None)` | 产生一条派生事件 |
+| `discard_emitted()` | 清除当前 Handler 尚未提交的派生事件，Flow 仍可继续使用 |
 | `replace_payload(new_payload)` | 替换后续 Handler 看到的 Payload |
 | `stop_propagation()` | 阻止尚未启动的后续 Handler |
 
@@ -155,6 +157,7 @@ handler_token = events.subscribe(
     priority=100,
     timeout=10.0,
     controls_flow=False,
+    max_attempts=1,
 )
 ```
 

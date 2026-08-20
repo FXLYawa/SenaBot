@@ -65,6 +65,12 @@ class EventRegistry:
     def subscribe(self, spec: HandlerSpec, handler: EventHandler) -> RegistrationToken:
         """注册 event 处理器"""
         self._validate_event_pattern(spec.event_pattern)
+        if spec.max_attempts < 1:
+            raise EventError(
+                "registration_conflict",
+                "Handler max_attempts must be at least 1.",
+                {"handler_id": spec.handler_id, "max_attempts": spec.max_attempts},
+            )
         
         key = (spec.owner_id, spec.handler_id)
         if key in self._handler_keys:

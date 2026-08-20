@@ -30,3 +30,4 @@ class HandlerSpec:
     priority: int = 100
     timeout: float | None = None  # 处理器超时时间，单位为秒，None表示默认
     controls_flow: bool = False  # 是否控制事件流，若为 True，则该处理器会阻塞事件流
+    max_attempts: int = 1  # 总执行次数；1 表示失败后不重试，大于 1 表示失败后重试

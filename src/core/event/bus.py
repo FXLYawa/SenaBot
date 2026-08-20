@@ -171,8 +171,7 @@ class EventBus:
                     )
                     continue
                 
-                flow = self._new_flow(current, reg, event_spec)
-                committed = await self._invoke(reg, flow)
+                committed = await self._invoke(reg, current, event_spec)
                 if committed is None:
                     continue
                 current, stopped, derived = committed
@@ -189,8 +188,7 @@ class EventBus:
     ) -> None:
         """运行单个事件处理器"""
         
-        flow = self._new_flow(envelope, registration, event_spec)
-        committed = await self._invoke(registration, flow)
+        committed = await self._invoke(registration, envelope, event_spec)
         if committed is not None:
             self._enqueue_all(committed[2])
     
@@ -226,9 +224,10 @@ class EventBus:
     async def _invoke(
         self,
         registration: HandlerRegistration,
-        flow: EventFlow,
+        envelope: EventEnvelope,
+        event_spec: EventSpec,
     ) -> tuple[EventEnvelope, bool, tuple[EventEnvelope, ...]] | None:
-        """调用事件处理器并返回结果"""
+        """调用 Handler；失败尝试不提交，并使用新的 Flow 进行有限重试。"""
         
         timeout = registration.spec.timeout
         if timeout is None:
@@ -237,29 +236,41 @@ class EventBus:
                 if registration.spec.controls_flow 
                 else self.default_handler_timeout
             )
-        try:
-            return await asyncio.wait_for(
-                self._invoke_and_commit(registration, flow),
-                timeout=timeout,
-            )
-        except TimeoutError:
-            self.logger.warning(
-                "Event handler timed out after %.1f seconds: %s (owner=%s)",
-                timeout,
-                registration.spec.handler_id,
-                registration.spec.owner_id,
-            )
-        except asyncio.CancelledError:
+        max_attempts = registration.spec.max_attempts
+        for attempt in range(1, max_attempts + 1):
+            # 失败的 Flow 已经结束，重试必须从原始信封创建全新的暂存区。
+            flow = self._new_flow(envelope, registration, event_spec)
+            try:
+                return await asyncio.wait_for(
+                    self._invoke_and_commit(registration, flow),
+                    timeout=timeout,
+                )
+            except TimeoutError:
+                self.logger.warning(
+                    "Event handler timed out after %.1f seconds: %s "
+                    "(owner=%s, attempt=%d/%d)",
+                    timeout,
+                    registration.spec.handler_id,
+                    registration.spec.owner_id,
+                    attempt,
+                    max_attempts,
+                )
+                # 超时不能证明外部副作用没有发生，因此不自动重试。
+                flow._discard()
+                return None
+            except asyncio.CancelledError:
+                flow._discard()
+                raise
+            except Exception as exc:
+                self.logger.exception(
+                    "Error in event handler %s (owner=%s, attempt=%d/%d): %s",
+                    registration.spec.handler_id,
+                    registration.spec.owner_id,
+                    attempt,
+                    max_attempts,
+                    exc,
+                )
             flow._discard()
-            raise
-        except Exception as e:
-            self.logger.exception(
-                "Error in event handler %s (owner=%s): %s",
-                registration.spec.handler_id,
-                registration.spec.owner_id,
-                e,
-            )
-        flow._discard()
         return None
         
     

@@ -85,6 +85,17 @@ class EventFlow:
             self._build_derived(self._envelope, event_type, payload, metadata)
         )
         
+    def discard_emitted(self) -> None:
+        """清除当前 Handler 尚未提交的派生事件，并保持 Flow 可继续使用。
+
+        Handler 捕获可处理的业务异常后，可以放弃异常发生前暂存的事件，再发布对应的
+        失败事件并正常返回。未捕获异常仍由 EventBus 丢弃整个 Flow。
+        """
+
+        self._require_active()
+        self._derived.clear()
+        
+        
     def _commit(self) -> tuple[EventEnvelope, bool, tuple[EventEnvelope, ...]]:
         """提交事件流的结果"""
         
