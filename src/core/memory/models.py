@@ -1,5 +1,6 @@
-from datetime import datetime
 from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
 from typing import Any
 
 
@@ -86,3 +87,50 @@ class MemoryCandidate:
     content: str
     # 一些候选的额外信息,如果没有传metadata,自动创建一个新的空字典
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+class MemoryUpdateAction(str, Enum):
+    """
+    操作行为的枚举类,分别表示:
+    ADD:完全新内容
+    UPDATE:存在旧记忆，但旧记忆需要被补充
+    DELETE:旧记忆已经被推翻,不再有效
+    NONE:不需要入库
+    """
+
+    ADD = "add"
+    UPDATE = "update"
+
+    # MVP 暂按物理删除处理；若想保证人格变化,未来可演化为失效标记以保留历史状态。
+    DELETE = "delete"
+    NONE = "none"
+
+
+@dataclass
+class MemoryUpdateDecision:
+    """
+    对于某条长期记忆候选,最终决定对已有记忆执行什么操作
+    """
+    action: MemoryUpdateAction
+
+    candidate: MemoryCandidate
+
+    # 要更新或删除的memory_id,ADD和None操作固定为None
+    target_memory_id: str | None = None
+
+    # 新记忆或者更新后的内容
+    content: str | None = None
+
+
+@dataclass
+class MemoryUpdateInput:
+    """候选记忆进入审查、更新与正式入库流程时所需的业务上下文。"""
+
+    candidate: MemoryCandidate
+
+    user_id: str
+    session_id: str
+    group_id: str
+
+    source_event_id: str
+    operation_id: str

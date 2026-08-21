@@ -6,6 +6,7 @@ from .models import (
     MemoryExtractionContext,
     MemoryExtractionMessage,
 )
+from .prompts import MEMORY_EXTRACTION_PROMPT
 from .protocols import MemoryLLMProtocol
 
 
@@ -19,58 +20,60 @@ class LLMMemoryExtractor:
         self,
         context: MemoryExtractionContext,
     ) -> list[MemoryCandidate]:
-        """
-        llm返回总结结果
-        """
+        """调用 LLM，从当前消息中提取候选长期记忆。"""
+
         prompt = self._build_prompt(context)
         response = await self._llm.generate(prompt)
 
         return self._parse_response(response)
 
     def _build_prompt(
-            self,
-            context: MemoryExtractionContext,
-    ) -> str:
-        """
-        负责将上下文填充到 Memory extraction prompt
-        """
-        summary = context.summary or "无"
+    self,
+    context: MemoryExtractionContext,
+) -> str:
+    """构建用于候选记忆提取的 Prompt。"""
 
-        recent_messages = self._format_messages(
-            context.recent_messages
-        )
+    summary = context.summary or "无"
 
-        new_messages = self._format_messages(
-            context.new_messages
-        )
+    recent_messages = self._format_messages(
+        context.recent_messages
+    )
 
-        return MEMORY_EXTRACTION_PROMPT.format(
-            summary=summary,
-            recent_messages=recent_messages,
-            new_messages=new_messages,
-        )
+    new_messages = self._format_messages(
+        context.new_messages
+    )
+
+    return MEMORY_EXTRACTION_PROMPT.format(
+        summary=summary,
+        recent_messages=recent_messages,
+        new_messages=new_messages,
+    )
     def _format_messages(
         self,
         messages: list[MemoryExtractionMessage],
     ) -> str:
+        """将消息列表转换为适合放入 Prompt 的文本。"""
 
-        """输入适配"""
         if not messages:
             return "无"
 
-        return "\n".join(f"{message.role}: {message.content}" for message in messages)
+        return "\n".join(
+            f"{message.role}: {message.content}"
+            for message in messages
+        )
 
     def _parse_response(
         self,
         response: str,
     ) -> list[MemoryCandidate]:
+        """将 LLM 返回的 JSON 转换为候选记忆。"""
 
-        """
-        输出适配
-        """
         data = json.loads(response)
+
         if not isinstance(data, dict):
-            raise ValueError("memory extraction response must be a JSON object")
+            raise ValueError(
+                "memory extraction response must be a JSON object"
+            )
 
         memories = data.get("memories", [])
 

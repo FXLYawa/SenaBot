@@ -1,6 +1,12 @@
 from typing import Protocol
 
-from .models import Memory, MemoryCandidate, MemoryExtractionContext, MemoryQueryCriteria
+from .models import (
+    Memory,
+    MemoryCandidate,
+    MemoryExtractionContext,
+    MemoryQueryCriteria,
+    MemoryUpdateDecision,
+)
 
 
 class MemoryRepositoryProtocol(Protocol):
@@ -16,6 +22,18 @@ class MemoryRepositoryProtocol(Protocol):
         ...
 
     async def find_by_operation_id(self, operation_id: str) -> Memory | None:
+        ...
+
+    async def update(
+        self,
+        memory: Memory,
+    ) -> Memory:
+        ...
+
+    async def delete(
+        self,
+        memory_id: str,
+    ) -> None:
         ...
 
 
@@ -42,4 +60,17 @@ class MemoryLLMProtocol(Protocol):
         self,
         prompt: str,
     ) -> str:
+        ...
+
+
+class MemoryUpdaterProtocol(Protocol):
+    """
+    负责比较新记忆和检索记忆,并给出最终进行的操作
+    """
+
+    async def decide(
+        self,
+        candidate: MemoryCandidate,
+        existing_memories: list[Memory],
+    ) -> MemoryUpdateDecision:
         ...

@@ -143,3 +143,43 @@ class FileMemoryRepository:
             raise MemoryPersistenceError(
                 "记忆文件写入失败"
             ) from error
+
+    async def update(
+        self,
+        memory: models.Memory,
+    ) -> models.Memory:
+        """更新已有记忆。"""
+
+        data = self._read_data()
+
+        memory_data = asdict(memory)
+        memory_data["created_at"] = memory.created_at.isoformat()
+        memory_data["updated_at"] = memory.updated_at.isoformat()
+
+        for index, item in enumerate(data):
+            if item.get("memory_id") == memory.memory_id:
+                data[index] = memory_data
+                self._write_data(data)
+                return memory
+
+        raise MemoryPersistenceError(
+            f"未找到需要更新的记忆: {memory.memory_id}"
+        )
+
+    async def delete(
+        self,
+        memory_id: str,
+    ) -> None:
+        """删除已有记忆。"""
+
+        data = self._read_data()
+
+        for index, item in enumerate(data):
+            if item.get("memory_id") == memory_id:
+                del data[index]
+                self._write_data(data)
+                return
+
+        raise MemoryPersistenceError(
+            f"未找到需要删除的记忆: {memory_id}"
+        )

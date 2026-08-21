@@ -77,7 +77,12 @@ MemoryWriteResult
 
 `operation_id` 是一次 Memory 写入操作的唯一标识。
 
-相同 `operation_id` 被重复提交时，不会重复写入，而是返回第一次创建的 `memory_id`。
+普通 `write()` 流程中，相同 `operation_id` 被重复提交时，不会重复写入，
+而是返回第一次创建的 `memory_id`。
+
+候选审查与更新流程 `review_and_update()` 在当前 MVP 中不提供重试幂等保证。
+该流程中的 `operation_id` 仅作为操作来源标识。ADD、UPDATE、DELETE 的完整幂等语义，
+需要后续通过独立操作记录及正式 Data 层事务边界实现。
 
 ### source_event_id
 
