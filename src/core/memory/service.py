@@ -30,42 +30,70 @@ class MemoryService:
     """Memory的业务处理类"""
 
     def __init__(
+      self,
+      repository: MemoryRepositoryProtocol,
+      extractor: MemoryExtractorProtocol | None = None,
+      updater: MemoryUpdaterProtocol | None = None,
+      embedder: MemoryEmbeddingProtocol | None = None,
+      retriever: MemoryRetrieverProtocol | None = None,
+      reranker: MemoryRerankerProtocol | None = None,
+    ) -> None:
+      self.repository = repository
+      self.extractor = extractor
+      self.updater = updater
+      self.embedder = embedder
+      self.retriever = retriever
+      self.reranker = reranker
+
+    async def query(
+      self,
+      request: MemoryQueryRequest,
+    ) ->  MemoryQueryResult:
+      """
+      负责查询的主链路，即向量化 -> 检索 -> 重排 -> 选出最终结果。
+      """
+      if self.embedder is None:
+          raise RuntimeError("memory embedder is not configured")
+
+      if self.retriever is None:
+          raise RuntimeError("memory retriever is not configured")
+
+      if self.reranker is None:
+          raise RuntimeError("memory reranker is not configured")
+
+      query_embedding = await self.embedder.embed(request.query_text)
+
+      candidates = await self.retriever.retrieve(
+          query_embedding,
+          user_id=request.user_id,
+          session_id=request.session_id,
+          group_id=request.group_id,
+      )
+
+      candidates = await self.reranker.rerank(
+          request.query_text,
+          candidates,
+      )
+
+      memories = [candidate.memory for candidate in candidates]
+
+      return MemoryQueryResult(
+          query_id=request.query_id,
+          user_id=request.user_id,
+          session_id=request.session_id,
+          group_id=request.group_id,
+          memories=memories,
+      )
+
+    async def write(
         self,
-        repository: MemoryRepositoryProtocol,
-        extractor: MemoryExtractorProtocol | None = None,
-        updater: MemoryUpdaterProtocol | None = None,
-    ):
-        self.repository = repository
-        self.extractor = extractor
-        self.updater = updater
+        request: MemoryWriteRequest,
+    ) -> MemoryWriteResult:
+      """写入长期记忆并保证来源事件与操作的幂等性."""
 
-    async def query(self, request: MemoryQueryRequest) -> MemoryQueryResult:
-        """Memory查询记忆的函数,当前为简单实现,并不包含向量数据库查询"""
-
-        criteria = MemoryQueryCriteria(
-            query_text=request.query_text,
-            user_id=request.user_id,
-            session_id=request.session_id,
-            group_id=request.group_id,
-        )
-
-        memories = await self.repository.query(criteria)
-
-        return MemoryQueryResult(
-            query_id=request.query_id,
-            user_id=request.user_id,
-            session_id=request.session_id,
-            group_id=request.group_id,
-            memories=memories,
-        )
-
-    async def write(self, request: MemoryWriteRequest) -> MemoryWriteResult:
-        """Memory写入记忆,当前为简单写入JSON,并不包含向量数据库写入"""
-
-        # 检查相同操作是否已经执行
-        existing_memory = await self.repository.find_by_operation_id(
-            request.operation_id
-        )
+     existing_memory = await self.repository.find_by_operation_id(
+         request.operation_id
+      )
 
         if existing_memory is not None:
             return MemoryWriteResult(
@@ -76,11 +104,11 @@ class MemoryService:
                 memory_id=existing_memory.memory_id,
             )
 
-        existing_memory = await self.repository.find_by_source_event_id(
+          existing_memory = await self.repository.find_by_source_event_id(
             request.source_event_id
         )
 
-        if existing_memory is not None:
+          if existing_memory is not None:
             return MemoryWriteResult(
                 operation_id=request.operation_id,
                 group_id=request.group_id,
@@ -89,10 +117,10 @@ class MemoryService:
                 memory_id=existing_memory.memory_id,
             )
 
-        memory_id = str(uuid4())
-        current_time = datetime.now(timezone.utc)
+          memory_id = str(uuid4())
+          current_time = datetime.now(timezone.utc)
 
-        memory = models.Memory(
+          memory = models.Memory(
             memory_id=memory_id,
             content=request.write_text,
             created_at=current_time,
@@ -103,17 +131,17 @@ class MemoryService:
             source_event_id=request.source_event_id,
             operation_id=request.operation_id,
             metadata={},
-        )
+          )
 
-        saved_memory = await self.repository.save(memory)
+          saved_memory = await self.repository.save(memory)
 
-        return MemoryWriteResult(
+          return MemoryWriteResult(
             operation_id=request.operation_id,
             group_id=request.group_id,
             session_id=request.session_id,
             user_id=request.user_id,
             memory_id=saved_memory.memory_id,
-        )
+          )
 
     async def extract(
         self,

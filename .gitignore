@@ -1,6 +1,9 @@
 # Local-only material (original specs and reference repositories)
 .local/
 
+# Local character artwork (do not commit licensed/source assets)
+/frontend/public/characters/sena/
+
 # Python environments and caches
 .venv/
 venv/
