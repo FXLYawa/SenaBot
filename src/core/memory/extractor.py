@@ -1,4 +1,5 @@
 import json
+from .prompts.extraction import MEMORY_EXTRACTION_PROMPT
 
 from .models import (
     MemoryCandidate,
@@ -27,26 +28,26 @@ class LLMMemoryExtractor:
         return self._parse_response(response)
 
     def _build_prompt(
-        self,
-        context: MemoryExtractionContext,
-    ) -> str:
-        """将提取上下文填充到记忆提取 Prompt 中。"""
+    self,
+    context: MemoryExtractionContext,
+) -> str:
+    """构建用于候选记忆提取的 Prompt。"""
 
-        summary = context.summary or "无"
+    summary = context.summary or "无"
 
-        recent_messages = self._format_messages(
-            context.recent_messages
-        )
-        new_messages = self._format_messages(
-            context.new_messages
-        )
+    recent_messages = self._format_messages(
+        context.recent_messages
+    )
 
-        return MEMORY_EXTRACTION_PROMPT.format(
-            summary=summary,
-            recent_messages=recent_messages,
-            new_messages=new_messages,
-        )
+    new_messages = self._format_messages(
+        context.new_messages
+    )
 
+    return MEMORY_EXTRACTION_PROMPT.format(
+        summary=summary,
+        recent_messages=recent_messages,
+        new_messages=new_messages,
+    )
     def _format_messages(
         self,
         messages: list[MemoryExtractionMessage],
