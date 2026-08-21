@@ -1,14 +1,28 @@
+from pathlib import Path
+
 import pytest
 
 from core.memory.contracts import (
     MemoryQueryRequest,
     MemoryWriteRequest,
 )
-from pathlib import Path
-
+from core.memory.embedding import SimpleMemoryEmbedder
 from core.memory.errors import MemoryPersistenceError
 from core.memory.repository import FileMemoryRepository
+from core.memory.reranker import SimpleMemoryReranker
+from core.memory.retriever import SimpleMemoryRetriever
 from core.memory.service import MemoryService
+
+
+def create_query_service(
+    repository: FileMemoryRepository,
+) -> MemoryService:
+    return MemoryService(
+        repository=repository,
+        embedder=SimpleMemoryEmbedder(),
+        retriever=SimpleMemoryRetriever(repository),
+        reranker=SimpleMemoryReranker(),
+    )
 
 
 @pytest.mark.asyncio
@@ -18,7 +32,7 @@ async def test_write_and_query_memory(tmp_path):
     file_path = tmp_path / "memories.json"
 
     repository = FileMemoryRepository(file_path)
-    service = MemoryService(repository)
+    service = create_query_service(repository)
 
     write_request = MemoryWriteRequest(
         operation_id="operation-001",
@@ -57,7 +71,7 @@ async def test_query_memory_isolation(tmp_path):
     file_path = tmp_path / "memories.json"
 
     repository = FileMemoryRepository(file_path)
-    service = MemoryService(repository)
+    service = create_query_service(repository)
 
     write_requests = [
         # 查询时应该查到这一条
@@ -130,7 +144,7 @@ async def test_source_event_id_deduplication(tmp_path):
     file_path = tmp_path / "memories.json"
 
     repository = FileMemoryRepository(file_path)
-    service = MemoryService(repository)
+    service = create_query_service(repository)
 
     first_request = MemoryWriteRequest(
         operation_id="operation-001",
@@ -177,7 +191,7 @@ async def test_operation_id_idempotency(tmp_path):
     file_path = tmp_path / "memories.json"
 
     repository = FileMemoryRepository(file_path)
-    service = MemoryService(repository)
+    service = create_query_service(repository)
 
     first_request = MemoryWriteRequest(
         operation_id="operation-001",

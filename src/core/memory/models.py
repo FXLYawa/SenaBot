@@ -1,6 +1,7 @@
 from dataclasses import dataclass
-from typing import Any
 from datetime import datetime
+from typing import Any
+
 
 @dataclass
 class Memory:
@@ -17,7 +18,7 @@ class Memory:
     content: str
     created_at: datetime
     updated_at: datetime
-    operation_id:str
+    operation_id: str
 
     user_id: str
     session_id: str
@@ -25,6 +26,7 @@ class Memory:
     source_event_id: str
 
     metadata: dict[str, Any]
+
 
 @dataclass
 class MemoryQueryCriteria:
@@ -35,3 +37,9 @@ class MemoryQueryCriteria:
     user_id: str
     session_id: str
     group_id: str
+
+
+@dataclass
+class MemoryRetrievalCandidate:
+    memory: Memory
+    score: float
