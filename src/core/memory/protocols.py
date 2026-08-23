@@ -1,63 +1,76 @@
 from typing import Protocol
 
-from .models import Memory, MemoryQueryCriteria, MemoryRetrievalCandidate
+from .models import (
+    Memory,
+    MemoryCandidate,
+    MemoryExtractionContext,
+    MemoryQueryCriteria,
+    MemoryUpdateDecision,
+)
 
 
 class MemoryRepositoryProtocol(Protocol):
     """规定 Memory 层访问底层数据时必须具备的能力。"""
 
-    async def query(
-        self,
-        criteria: MemoryQueryCriteria,
-    ) -> list[Memory]:
+    async def query(self, criteria: MemoryQueryCriteria) -> list[Memory]:
         ...
 
     async def save(self, memory: Memory) -> Memory:
         ...
 
-    async def find_by_source_event_id(
-        self,
-        source_event_id: str,
-    ) -> Memory | None:
+    async def find_by_source_event_id(self, source_event_id: str) -> Memory | None:
         ...
 
-    async def find_by_operation_id(
-        self,
-        operation_id: str,
-    ) -> Memory | None:
+    async def find_by_operation_id(self, operation_id: str) -> Memory | None:
         ...
 
-
-class MemoryRetrieverProtocol(Protocol):
-    """检索主链路"""
-
-    async def retrieve(
+    async def update(
         self,
-        query_embedding: list[float],
-        *,
-        user_id: str,
-        session_id: str,
-        group_id: str,
-    ) -> list[MemoryRetrievalCandidate]:
+        memory: Memory,
+    ) -> Memory:
+        ...
+
+    async def delete(
+        self,
+        memory_id: str,
+    ) -> None:
         ...
 
 
-class MemoryEmbeddingProtocol(Protocol):
-    """向量化"""
+class MemoryExtractorProtocol(Protocol):
+    """
+    定义长期记忆候选提取能力。
 
-    async def embed(
+    """
+
+    async def extract(
         self,
-        query: str,
-    ) -> list[float]:
+        context: MemoryExtractionContext,
+    ) -> list[MemoryCandidate]:
         ...
 
 
-class MemoryRerankerProtocol(Protocol):
-    """重排"""
+class MemoryLLMProtocol(Protocol):
+    """
+       Memory提取器所需的最小LLM调用能力
 
-    async def rerank(
+    """
+
+    async def generate(
         self,
-        query: str,
-        candidates: list[MemoryRetrievalCandidate],
-    ) -> list[MemoryRetrievalCandidate]:
+        prompt: str,
+    ) -> str:
+        ...
+
+
+class MemoryUpdaterProtocol(Protocol):
+    """
+    负责比较新记忆和检索记忆,并给出最终进行的操作
+    """
+
+    async def decide(
+        self,
+        candidate: MemoryCandidate,
+        existing_memories: list[Memory],
+    ) -> MemoryUpdateDecision:
         ...
