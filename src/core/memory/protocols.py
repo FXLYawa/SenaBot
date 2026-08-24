@@ -5,6 +5,7 @@ from .models import (
     MemoryCandidate,
     MemoryExtractionContext,
     MemoryQueryCriteria,
+    MemoryRetrievalCandidate,
     MemoryUpdateDecision,
 )
 
@@ -47,6 +48,41 @@ class MemoryExtractorProtocol(Protocol):
         self,
         context: MemoryExtractionContext,
     ) -> list[MemoryCandidate]:
+        ...
+
+
+class MemoryEmbeddingProtocol(Protocol):
+    """将预处理后的查询文本转换为检索向量。"""
+
+    async def embed(
+        self,
+        query: str,
+    ) -> list[float]:
+        ...
+
+
+class MemoryRetrieverProtocol(Protocol):
+    """根据查询向量和作用域召回候选记忆。"""
+
+    async def retrieve(
+        self,
+        query_embedding: list[float],
+        *,
+        user_id: str,
+        session_id: str,
+        group_id: str,
+    ) -> list[MemoryRetrievalCandidate]:
+        ...
+
+
+class MemoryRerankerProtocol(Protocol):
+    """根据查询文本对候选记忆重新排序。"""
+
+    async def rerank(
+        self,
+        query: str,
+        candidates: list[MemoryRetrievalCandidate],
+    ) -> list[MemoryRetrievalCandidate]:
         ...
 
 

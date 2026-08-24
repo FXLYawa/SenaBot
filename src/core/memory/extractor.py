@@ -1,12 +1,11 @@
 import json
-from .prompts.extraction import MEMORY_EXTRACTION_PROMPT
 
 from .models import (
     MemoryCandidate,
     MemoryExtractionContext,
     MemoryExtractionMessage,
 )
-from .prompts import MEMORY_EXTRACTION_PROMPT
+from .prompts.extraction import MEMORY_EXTRACTION_PROMPT
 from .protocols import MemoryLLMProtocol
 
 
@@ -28,26 +27,27 @@ class LLMMemoryExtractor:
         return self._parse_response(response)
 
     def _build_prompt(
-    self,
-    context: MemoryExtractionContext,
-) -> str:
-    """构建用于候选记忆提取的 Prompt。"""
+        self,
+        context: MemoryExtractionContext,
+    ) -> str:
+        """构建用于候选记忆提取的 Prompt。"""
 
-    summary = context.summary or "无"
+        summary = context.summary or "无"
 
-    recent_messages = self._format_messages(
-        context.recent_messages
-    )
+        recent_messages = self._format_messages(
+            context.recent_messages
+        )
 
-    new_messages = self._format_messages(
-        context.new_messages
-    )
+        new_messages = self._format_messages(
+            context.new_messages
+        )
 
-    return MEMORY_EXTRACTION_PROMPT.format(
-        summary=summary,
-        recent_messages=recent_messages,
-        new_messages=new_messages,
-    )
+        return MEMORY_EXTRACTION_PROMPT.format(
+            summary=summary,
+            recent_messages=recent_messages,
+            new_messages=new_messages,
+        )
+
     def _format_messages(
         self,
         messages: list[MemoryExtractionMessage],

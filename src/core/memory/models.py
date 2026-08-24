@@ -29,6 +29,8 @@ class Memory:
     metadata: dict[str, Any]
 
 
+
+
 @dataclass
 class MemoryQueryCriteria:
     """Memory 层查询 Data 层时使用的查询条件。"""
@@ -38,6 +40,12 @@ class MemoryQueryCriteria:
     user_id: str
     session_id: str
     group_id: str
+
+
+@dataclass
+class MemoryRetrievalCandidate:
+    memory: Memory
+    score: float
 
 
 @dataclass
