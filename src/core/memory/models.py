@@ -241,7 +241,7 @@ class MemoryItem:
 
 
 @dataclass(frozen=True)
-class MemoryQueryContext:
+class MemoryRecallContext:
     """一次记忆查询可以访问的空间和作用域"""
 
     scopes: frozenset[MemoryScopeRef]

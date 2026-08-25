@@ -8,7 +8,7 @@ from core.memory.models import (
     Fact,
     Memory,
     MemoryItem,
-    MemoryQueryContext,
+    MemoryRecallContext,
     MemoryQueryCriteria,
     MemoryRetrievalCandidate,
     MemoryScopeKind,
@@ -86,17 +86,13 @@ class RecordingRetriever:
         self,
         query_embedding: list[float],
         *,
-        user_id: str,
-        session_id: str,
-        group_id: str,
+        context: MemoryRecallContext,
     ) -> list[MemoryRetrievalCandidate]:
         self.calls.append(
             (
                 "retrieve",
                 query_embedding,
-                user_id,
-                session_id,
-                group_id,
+                context,
             )
         )
         return self.candidates
@@ -160,9 +156,24 @@ async def test_query_runs_complete_retrieval_pipeline():
         (
             "retrieve",
             [1.0, 2.0],
-            "user-001",
-            "session-001",
-            "group-001",
+            MemoryRecallContext(
+                scopes=frozenset(
+                    {
+                        MemoryScopeRef(
+                            MemoryScopeKind.USER,
+                            "user-001",
+                        ),
+                        MemoryScopeRef(
+                            MemoryScopeKind.SESSION,
+                            "session-001",
+                        ),
+                        MemoryScopeRef(
+                            MemoryScopeKind.GROUP,
+                            "group-001",
+                        ),
+                    }
+                )
+            ),
         ),
         ("rerank", "用户喜欢什么运动", candidates),
     ]
@@ -284,9 +295,24 @@ async def test_simple_retriever_queries_scope_and_wraps_memories():
 
     candidates = await retriever.retrieve(
         [2.0],
-        user_id="user-001",
-        session_id="session-001",
-        group_id="group-001",
+        context=MemoryRecallContext(
+            scopes=frozenset(
+                {
+                    MemoryScopeRef(
+                        MemoryScopeKind.USER,
+                        "user-001",
+                    ),
+                    MemoryScopeRef(
+                        MemoryScopeKind.SESSION,
+                        "session-001",
+                    ),
+                    MemoryScopeRef(
+                        MemoryScopeKind.GROUP,
+                        "group-001",
+                    ),
+                }
+            )
+        ),
     )
 
     assert repository.criteria == MemoryQueryCriteria(
@@ -298,6 +324,52 @@ async def test_simple_retriever_queries_scope_and_wraps_memories():
     assert candidates == [
         MemoryRetrievalCandidate(memory=memory, score=0.0)
     ]
+
+
+@pytest.mark.asyncio
+async def test_simple_retriever_requires_all_legacy_scope_dimensions():
+    retriever = SimpleMemoryRetriever(RecordingRepository([]))
+    context = MemoryRecallContext(
+        scopes=frozenset(
+            {
+                MemoryScopeRef(MemoryScopeKind.USER, "user-001"),
+                MemoryScopeRef(
+                    MemoryScopeKind.SESSION,
+                    "session-001",
+                ),
+            }
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="legacy retriever requires exactly one group scope",
+    ):
+        await retriever.retrieve([2.0], context=context)
+
+
+@pytest.mark.asyncio
+async def test_simple_retriever_rejects_duplicate_scope_kind():
+    retriever = SimpleMemoryRetriever(RecordingRepository([]))
+    context = MemoryRecallContext(
+        scopes=frozenset(
+            {
+                MemoryScopeRef(MemoryScopeKind.USER, "user-001"),
+                MemoryScopeRef(MemoryScopeKind.USER, "user-002"),
+                MemoryScopeRef(
+                    MemoryScopeKind.SESSION,
+                    "session-001",
+                ),
+                MemoryScopeRef(MemoryScopeKind.GROUP, "group-001"),
+            }
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="legacy retriever requires exactly one user scope",
+    ):
+        await retriever.retrieve([2.0], context=context)
 
 
 @pytest.mark.asyncio
@@ -330,7 +402,7 @@ def test_scope_filter_matches_same_user_scope():
 
     assert is_scope_accessible(
         item,
-        MemoryQueryContext(frozenset({user_scope})),
+        MemoryRecallContext(frozenset({user_scope})),
     )
 
 
@@ -346,7 +418,7 @@ def test_scope_filter_rejects_different_user_scope():
             }
         ),
     )
-    context = MemoryQueryContext(
+    context = MemoryRecallContext(
         frozenset(
             {
                 MemoryScopeRef(
@@ -380,17 +452,17 @@ def test_scope_filter_requires_all_item_scopes():
 
     assert not is_scope_accessible(
         item,
-        MemoryQueryContext(frozenset({user_scope})),
+        MemoryRecallContext(frozenset({user_scope})),
     )
     assert is_scope_accessible(
         item,
-        MemoryQueryContext(
+        MemoryRecallContext(
             frozenset({user_scope, group_scope})
         ),
     )
     assert is_scope_accessible(
         item,
-        MemoryQueryContext(
+        MemoryRecallContext(
             frozenset({user_scope, group_scope, session_scope})
         ),
     )
@@ -411,7 +483,7 @@ def test_global_item_is_visible_in_empty_context():
 
     assert is_scope_accessible(
         item,
-        MemoryQueryContext(frozenset()),
+        MemoryRecallContext(frozenset()),
     )
 
 
@@ -427,7 +499,7 @@ def test_global_query_scope_does_not_grant_user_scope_access():
             }
         ),
     )
-    context = MemoryQueryContext(
+    context = MemoryRecallContext(
         frozenset(
             {
                 MemoryScopeRef(
@@ -456,7 +528,7 @@ def test_memory_space_does_not_affect_scope_access():
         frozenset({user_scope}),
         memory_space_id="space-002",
     )
-    context = MemoryQueryContext(frozenset({user_scope}))
+    context = MemoryRecallContext(frozenset({user_scope}))
 
     assert is_scope_accessible(first_item, context)
     assert is_scope_accessible(second_item, context)

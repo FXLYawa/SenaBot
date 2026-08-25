@@ -8,7 +8,7 @@ from .models import (
     MemoryPayload,
     MemoryQueryCriteria,
     MemoryRetrievalCandidate,
-    MemoryUpdateDecision,
+    MemoryUpdateDecision, MemoryRecallContext,
 )
 
 
@@ -80,9 +80,7 @@ class MemoryRetrieverProtocol(Protocol):
         self,
         query_embedding: list[float],
         *,
-        user_id: str,
-        session_id: str,
-        group_id: str,
+        context:MemoryRecallContext,
     ) -> list[MemoryRetrievalCandidate]:
         ...
 
