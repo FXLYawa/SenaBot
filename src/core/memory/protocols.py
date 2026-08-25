@@ -4,6 +4,8 @@ from .models import (
     Memory,
     MemoryCandidate,
     MemoryExtractionContext,
+    MemoryMaterializationInput,
+    MemoryPayload,
     MemoryQueryCriteria,
     MemoryRetrievalCandidate,
     MemoryUpdateDecision,
@@ -48,6 +50,16 @@ class MemoryExtractorProtocol(Protocol):
         self,
         context: MemoryExtractionContext,
     ) -> list[MemoryCandidate]:
+        ...
+
+
+class MemoryMaterializerProtocol(Protocol):
+    """将原始候选转换为具体领域 Payload。"""
+
+    async def materialize(
+        self,
+        input_data: MemoryMaterializationInput,
+    ) -> MemoryPayload:
         ...
 
 

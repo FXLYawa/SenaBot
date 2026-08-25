@@ -312,6 +312,30 @@ class MemoryCandidate:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class MemoryMaterializationInput:
+    """将原始候选转换为领域 Payload 所需的信息。"""
+
+    candidate: MemoryCandidate
+    provenance: tuple[Provenance, ...]
+    recorded_at: datetime
+    related_items: tuple[MemoryItem, ...] = ()
+
+    def __post_init__(self) -> None:
+        _require_provenance(self.provenance)
+
+
+@dataclass(frozen=True)
+class MemoryWriteEnvelope:
+    """正式 MemoryItem 及其写入操作上下文。"""
+
+    operation_id: str
+    item: MemoryItem
+
+    def __post_init__(self) -> None:
+        _require_non_blank(self.operation_id, "operation_id")
+
+
 class MemoryUpdateAction(str, Enum):
     """
     操作行为的枚举类,分别表示:

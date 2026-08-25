@@ -5,12 +5,21 @@ import pytest
 from core.memory.contracts import MemoryQueryRequest
 from core.memory.embedding import SimpleMemoryEmbedder
 from core.memory.models import (
+    Fact,
     Memory,
+    MemoryItem,
+    MemoryQueryContext,
     MemoryQueryCriteria,
     MemoryRetrievalCandidate,
+    MemoryScopeKind,
+    MemoryScopeRef,
+    Provenance,
 )
 from core.memory.reranker import SimpleMemoryReranker
-from core.memory.retriever import SimpleMemoryRetriever
+from core.memory.retriever import (
+    SimpleMemoryRetriever,
+    is_scope_accessible,
+)
 from core.memory.service import MemoryService
 
 
@@ -34,6 +43,24 @@ def create_memory(
         group_id=group_id,
         source_event_id=f"event-{memory_id}",
         metadata={},
+    )
+
+
+def create_memory_item(
+    item_id: str,
+    scopes: frozenset[MemoryScopeRef],
+    *,
+    memory_space_id: str = "space-001",
+) -> MemoryItem:
+    return MemoryItem(
+        item_id=item_id,
+        memory_space_id=memory_space_id,
+        scopes=scopes,
+        payload=Fact(
+            content="用户喜欢跑步",
+            provenance=(Provenance("event", "event-001"),),
+            recorded_at=datetime.now(timezone.utc),
+        ),
     )
 
 
@@ -289,3 +316,147 @@ async def test_simple_reranker_sorts_candidates_by_score_descending():
 
     assert result == [high_score, low_score]
     assert candidates == [low_score, high_score]
+
+
+def test_scope_filter_matches_same_user_scope():
+    user_scope = MemoryScopeRef(
+        MemoryScopeKind.USER,
+        "user-001",
+    )
+    item = create_memory_item(
+        "item-001",
+        frozenset({user_scope}),
+    )
+
+    assert is_scope_accessible(
+        item,
+        MemoryQueryContext(frozenset({user_scope})),
+    )
+
+
+def test_scope_filter_rejects_different_user_scope():
+    item = create_memory_item(
+        "item-001",
+        frozenset(
+            {
+                MemoryScopeRef(
+                    MemoryScopeKind.USER,
+                    "user-001",
+                )
+            }
+        ),
+    )
+    context = MemoryQueryContext(
+        frozenset(
+            {
+                MemoryScopeRef(
+                    MemoryScopeKind.USER,
+                    "user-002",
+                )
+            }
+        )
+    )
+
+    assert not is_scope_accessible(item, context)
+
+
+def test_scope_filter_requires_all_item_scopes():
+    user_scope = MemoryScopeRef(
+        MemoryScopeKind.USER,
+        "user-001",
+    )
+    group_scope = MemoryScopeRef(
+        MemoryScopeKind.GROUP,
+        "group-001",
+    )
+    session_scope = MemoryScopeRef(
+        MemoryScopeKind.SESSION,
+        "session-001",
+    )
+    item = create_memory_item(
+        "item-001",
+        frozenset({user_scope, group_scope}),
+    )
+
+    assert not is_scope_accessible(
+        item,
+        MemoryQueryContext(frozenset({user_scope})),
+    )
+    assert is_scope_accessible(
+        item,
+        MemoryQueryContext(
+            frozenset({user_scope, group_scope})
+        ),
+    )
+    assert is_scope_accessible(
+        item,
+        MemoryQueryContext(
+            frozenset({user_scope, group_scope, session_scope})
+        ),
+    )
+
+
+def test_global_item_is_visible_in_empty_context():
+    item = create_memory_item(
+        "item-global",
+        frozenset(
+            {
+                MemoryScopeRef(
+                    MemoryScopeKind.GLOBAL,
+                    None,
+                )
+            }
+        ),
+    )
+
+    assert is_scope_accessible(
+        item,
+        MemoryQueryContext(frozenset()),
+    )
+
+
+def test_global_query_scope_does_not_grant_user_scope_access():
+    item = create_memory_item(
+        "item-user",
+        frozenset(
+            {
+                MemoryScopeRef(
+                    MemoryScopeKind.USER,
+                    "user-001",
+                )
+            }
+        ),
+    )
+    context = MemoryQueryContext(
+        frozenset(
+            {
+                MemoryScopeRef(
+                    MemoryScopeKind.GLOBAL,
+                    None,
+                )
+            }
+        )
+    )
+
+    assert not is_scope_accessible(item, context)
+
+
+def test_memory_space_does_not_affect_scope_access():
+    user_scope = MemoryScopeRef(
+        MemoryScopeKind.USER,
+        "user-001",
+    )
+    first_item = create_memory_item(
+        "item-001",
+        frozenset({user_scope}),
+        memory_space_id="space-001",
+    )
+    second_item = create_memory_item(
+        "item-002",
+        frozenset({user_scope}),
+        memory_space_id="space-002",
+    )
+    context = MemoryQueryContext(frozenset({user_scope}))
+
+    assert is_scope_accessible(first_item, context)
+    assert is_scope_accessible(second_item, context)
