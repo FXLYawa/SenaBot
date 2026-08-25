@@ -1,136 +1,87 @@
 # Memory 模块
 
-Memory 模块负责记忆的写入、查询与持久化管理，为其他模块提供统一的记忆访问能力。
+Memory 模块负责提取、形成和召回长期记忆。领域数据统一使用
+`MemoryItem`，具体内容由 `Fact`、`Experience`、`Understanding`
+和 `Knowledge` 四类 Payload 表达。
 
-## 当前功能
+## 主要链路
 
-- 支持基础记忆写入
-- 支持按用户、会话、群组和文本查询记忆
-- 支持 User、Session、Group 维度的数据隔离
-- 支持 `source_event_id` 去重
-- 支持 `operation_id` 写入幂等
-- 支持持久化失败的统一异常处理
-
-## 目录结构
+### 候选提取
 
 ```text
-memory/
-├── __init__.py
-├── contracts.py
-├── errors.py
-├── models.py
-├── protocols.py
-├── repository.py
-├── service.py
-└── README.md
+new messages + summary + recent messages
+        ↓
+MemoryService.extract()
+        ↓
+MemoryCandidate[]
 ```
 
-各文件职责：
+Extraction 只从新消息提取候选；摘要和最近消息仅用于辅助理解。
 
-- `contracts.py`：定义其他模块与 Memory 模块之间的输入、输出契约
-- `models.py`：定义 Memory 模块内部使用的数据结构
-- `protocols.py`：声明 Repository 必须提供的能力
-- `repository.py`：实现记忆查询与持久化
-- `service.py`：实现记忆查询、写入和幂等处理流程
-- `errors.py`：定义 Memory 模块异常
+### 记忆形成
 
-## 查询流程
+```text
+MemoryCandidate
+        ↓
+embedding → retrieve related MemoryItem
+        ↓
+materialize MemoryPayload
+        ↓
+review MemoryChangePlan
+        ↓
+execute ADD / END_VALIDITY / SUPERSEDE / NONE
+        ↓
+MemoryRepositoryProtocol
+```
+
+同一批 `related_items` 会贯穿 Materialization、Review 和 Execution，
+避免一次 Formation 内使用不一致的旧记忆快照。
+
+### 记忆召回
 
 ```text
 MemoryQueryRequest
         ↓
-MemoryService.query()
+embedding
         ↓
-MemoryQueryCriteria
+retrieval with MemoryRecallContext
         ↓
-MemoryRepositoryProtocol.query()
+rerank
         ↓
-MemoryQueryResult
+MemoryQueryResult[list[MemoryItem]]
 ```
 
-查询条件包括：
+`MemoryScopeRef` 表示长期主体归属，不是未来使用场景的发布白名单。
+GLOBAL 记忆始终进入粗候选；其他记忆通过 Scope 交集进入候选。
 
-- `user_id`
-- `session_id`
-- `group_id`
-- `query_text`
+## 持久化边界
 
-不同用户、会话和群组之间的记忆互相隔离。
+当前只定义 `MemoryRepositoryProtocol`，不提供具体 Data 层实现。
+接口包括：
 
-## 写入流程
+- `add()`：新增正式 `MemoryItem`
+- `end_fact_validity()`：结束旧 Fact 的有效期
+- `supersede()`：用新 Understanding 或 Knowledge 替代旧版本
 
-```text
-MemoryWriteRequest
-        ↓
-检查 operation_id
-        ↓
-检查 source_event_id
-        ↓
-创建 Memory
-        ↓
-MemoryRepositoryProtocol.save()
-        ↓
-MemoryWriteResult
-```
+数据库结构、事务、失败恢复和完整幂等语义由后续 Data 层 Issue 处理。
+当前 `operation_id` 仅作为操作来源标识，不代表完整幂等保证。
 
-### operation_id
+## 占位实现
 
-`operation_id` 是一次 Memory 写入操作的唯一标识。
+`SimpleMemoryEmbedder`、`SimpleMemoryRetriever` 和
+`SimpleMemoryReranker` 只用于 MVP 编排及本地测试：
 
-普通 `write()` 流程中，相同 `operation_id` 被重复提交时，不会重复写入，
-而是返回第一次创建的 `memory_id`。
+- Simple Embedder 生成占位向量；
+- Simple Retriever 在内存快照上执行 Scope 过滤，不计算语义相关性；
+- Simple Reranker 按已有 score 排序。
 
-候选审查与更新流程 `review_and_update()` 在当前 MVP 中不提供重试幂等保证。
-该流程中的 `operation_id` 仅作为操作来源标识。ADD、UPDATE、DELETE 的完整幂等语义，
-需要后续通过独立操作记录及正式 Data 层事务边界实现。
-
-### source_event_id
-
-`source_event_id` 表示触发记忆写入的来源事件。
-
-相同来源事件被重复处理时，不会创建重复记忆。
-
-### memory_id
-
-`memory_id` 是最终生成的记忆自身的唯一标识，由 Memory 模块生成。
-
-## 持久化
-
-当前版本使用 JSON 文件作为临时持久化方式。
-
-Memory 层内部的时间字段使用 `datetime`。写入 JSON 时转换为 ISO 格式字符串，读取时再转换回 `datetime`。
-
-后续接入 Data 层时，可以替换 `FileMemoryRepository`，而不需要修改 `MemoryService`。
-
-## 异常处理
-
-文件读取失败、JSON 数据损坏或文件写入失败时，Repository 会抛出：
-
-```python
-MemoryPersistenceError
-```
-
-Memory 模块不会直接向上暴露 `OSError` 或 `JSONDecodeError` 等底层异常。
+这些实现不代表正式 Data 层或模型能力。
 
 ## 测试
 
-运行测试：
-
 ```bash
-pytest tests/memory/test_service.py -v
+pytest tests/memory -q
 ```
 
-当前测试覆盖：
-
-- 基础记忆写入和查询
-- User、Session、Group 隔离
-- `source_event_id` 去重
-- `operation_id` 幂等
-- 持久化失败处理
-
-## 当前限制
-
-- 暂未实现记忆遗忘
-- 暂未接入正式 Data 层
-- 当前文本查询仅使用字符串包含匹配
-- 暂未完成 Event 接入
+当前测试覆盖领域模型、Extraction、Recall、Materialization、Review、
+ChangePlan、Executor 和完整 Formation 编排。

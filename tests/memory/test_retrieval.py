@@ -6,10 +6,8 @@ from core.memory.contracts import MemoryQueryRequest
 from core.memory.embedding import SimpleMemoryEmbedder
 from core.memory.models import (
     Fact,
-    Memory,
     MemoryItem,
     MemoryRecallContext,
-    MemoryQueryCriteria,
     MemoryRetrievalCandidate,
     MemoryScopeKind,
     MemoryScopeRef,
@@ -24,25 +22,28 @@ from core.memory.service import MemoryService
 
 
 def create_memory(
-    memory_id: str,
+    item_id: str,
     content: str,
     *,
     user_id: str = "user-001",
     session_id: str = "session-001",
     group_id: str = "group-001",
-) -> Memory:
-    current_time = datetime.now(timezone.utc)
-    return Memory(
-        memory_id=memory_id,
-        content=content,
-        created_at=current_time,
-        updated_at=current_time,
-        operation_id=f"operation-{memory_id}",
-        user_id=user_id,
-        session_id=session_id,
-        group_id=group_id,
-        source_event_id=f"event-{memory_id}",
-        metadata={},
+) -> MemoryItem:
+    return MemoryItem(
+        item_id=item_id,
+        memory_space_id="space-001",
+        scopes=frozenset(
+            {
+                MemoryScopeRef(MemoryScopeKind.USER, user_id),
+                MemoryScopeRef(MemoryScopeKind.SESSION, session_id),
+                MemoryScopeRef(MemoryScopeKind.GROUP, group_id),
+            }
+        ),
+        payload=Fact(
+            content=content,
+            provenance=(Provenance("event", f"event-{item_id}"),),
+            recorded_at=datetime.now(timezone.utc),
+        ),
     )
 
 
@@ -111,19 +112,6 @@ class RecordingReranker:
         return list(reversed(candidates))
 
 
-class RecordingRepository:
-    def __init__(self, memories: list[Memory]) -> None:
-        self.memories = memories
-        self.criteria: MemoryQueryCriteria | None = None
-
-    async def query(
-        self,
-        criteria: MemoryQueryCriteria,
-    ) -> list[Memory]:
-        self.criteria = criteria
-        return self.memories
-
-
 @pytest.mark.asyncio
 async def test_query_runs_complete_retrieval_pipeline():
     calls: list[object] = []
@@ -133,9 +121,7 @@ async def test_query_runs_complete_retrieval_pipeline():
         MemoryRetrievalCandidate(first_memory, score=0.2),
         MemoryRetrievalCandidate(second_memory, score=0.8),
     ]
-    repository = RecordingRepository([])
     service = MemoryService(
-        repository=repository,
         embedder=RecordingEmbedder(calls),
         retriever=RecordingRetriever(calls, candidates),
         reranker=RecordingReranker(calls),
@@ -187,9 +173,7 @@ async def test_query_runs_complete_retrieval_pipeline():
 @pytest.mark.asyncio
 async def test_query_returns_empty_result_when_retriever_has_no_candidates():
     calls: list[object] = []
-    repository = RecordingRepository([])
     service = MemoryService(
-        repository=repository,
         embedder=RecordingEmbedder(calls),
         retriever=RecordingRetriever(calls, []),
         reranker=RecordingReranker(calls),
@@ -212,7 +196,6 @@ async def test_query_returns_empty_result_when_retriever_has_no_candidates():
 @pytest.mark.asyncio
 async def test_query_requires_embedder():
     service = MemoryService(
-        repository=RecordingRepository([]),
         retriever=RecordingRetriever([], []),
     )
 
@@ -234,7 +217,6 @@ async def test_query_requires_embedder():
 @pytest.mark.asyncio
 async def test_query_requires_retriever():
     service = MemoryService(
-        repository=RecordingRepository([]),
         embedder=RecordingEmbedder([]),
     )
 
@@ -257,7 +239,6 @@ async def test_query_requires_retriever():
 async def test_query_requires_reranker():
     calls: list[object] = []
     service = MemoryService(
-        repository=RecordingRepository([]),
         embedder=RecordingEmbedder(calls),
         retriever=RecordingRetriever(calls, []),
     )
@@ -288,10 +269,9 @@ async def test_simple_embedder_returns_placeholder_vector():
 
 
 @pytest.mark.asyncio
-async def test_simple_retriever_queries_scope_and_wraps_memories():
+async def test_simple_retriever_filters_scope_and_wraps_items():
     memory = create_memory("memory-001", "用户喜欢跑步")
-    repository = RecordingRepository([memory])
-    retriever = SimpleMemoryRetriever(repository)
+    retriever = SimpleMemoryRetriever([memory])
 
     candidates = await retriever.retrieve(
         [2.0],
@@ -315,61 +295,28 @@ async def test_simple_retriever_queries_scope_and_wraps_memories():
         ),
     )
 
-    assert repository.criteria == MemoryQueryCriteria(
-        query_text="",
-        user_id="user-001",
-        session_id="session-001",
-        group_id="group-001",
-    )
     assert candidates == [
         MemoryRetrievalCandidate(memory=memory, score=0.0)
     ]
 
 
 @pytest.mark.asyncio
-async def test_simple_retriever_requires_all_legacy_scope_dimensions():
-    retriever = SimpleMemoryRetriever(RecordingRepository([]))
+async def test_simple_retriever_filters_inaccessible_items():
+    memory = create_memory(
+        "memory-001",
+        "用户喜欢跑步",
+        user_id="user-002",
+    )
+    retriever = SimpleMemoryRetriever([memory])
     context = MemoryRecallContext(
         scopes=frozenset(
             {
                 MemoryScopeRef(MemoryScopeKind.USER, "user-001"),
-                MemoryScopeRef(
-                    MemoryScopeKind.SESSION,
-                    "session-001",
-                ),
             }
         )
     )
 
-    with pytest.raises(
-        ValueError,
-        match="legacy retriever requires exactly one group scope",
-    ):
-        await retriever.retrieve([2.0], context=context)
-
-
-@pytest.mark.asyncio
-async def test_simple_retriever_rejects_duplicate_scope_kind():
-    retriever = SimpleMemoryRetriever(RecordingRepository([]))
-    context = MemoryRecallContext(
-        scopes=frozenset(
-            {
-                MemoryScopeRef(MemoryScopeKind.USER, "user-001"),
-                MemoryScopeRef(MemoryScopeKind.USER, "user-002"),
-                MemoryScopeRef(
-                    MemoryScopeKind.SESSION,
-                    "session-001",
-                ),
-                MemoryScopeRef(MemoryScopeKind.GROUP, "group-001"),
-            }
-        )
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="legacy retriever requires exactly one user scope",
-    ):
-        await retriever.retrieve([2.0], context=context)
+    assert await retriever.retrieve([2.0], context=context) == []
 
 
 @pytest.mark.asyncio

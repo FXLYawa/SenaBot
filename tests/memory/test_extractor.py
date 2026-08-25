@@ -121,7 +121,7 @@ async def test_prompt_limits_context_and_assistant_to_supporting_information() -
 @pytest.mark.asyncio
 async def test_service_builds_context_and_delegates_to_extractor() -> None:
     extractor = RecordingExtractor()
-    service = MemoryService(repository=object(), extractor=extractor)  # type: ignore[arg-type]
+    service = MemoryService(extractor=extractor)
     input_data = MemoryExtractionInput(
         messages=[MemoryExtractionMessage("user", "我喜欢跑步")],
         metadata={"source_event_id": "event-001"},
@@ -144,7 +144,7 @@ async def test_service_builds_context_and_delegates_to_extractor() -> None:
 
 @pytest.mark.asyncio
 async def test_service_requires_configured_extractor() -> None:
-    service = MemoryService(repository=object())  # type: ignore[arg-type]
+    service = MemoryService()
 
     with pytest.raises(RuntimeError, match="memory extractor is not configured"):
         await service.extract(

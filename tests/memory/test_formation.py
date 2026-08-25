@@ -146,7 +146,6 @@ async def test_formation_runs_complete_pipeline_with_shared_snapshot():
     executor = RecordingExecutor(calls, execution)
     recall_context = MemoryRecallContext(scopes=SCOPES)
     service = MemoryService(
-        repository=object(),  # type: ignore[arg-type]
         embedder=embedder,
         retriever=retriever,
         materializer=materializer,
@@ -206,7 +205,6 @@ async def test_formation_supports_no_related_items():
         MemoryChangeExecutionResult(),
     )
     service = MemoryService(
-        repository=object(),  # type: ignore[arg-type]
         embedder=RecordingEmbedder(calls),
         retriever=RecordingRetriever(calls, []),
         materializer=materializer,
@@ -267,7 +265,6 @@ async def test_formation_requires_every_pipeline_dependency(
     }
     dependencies[missing_dependency] = None
     service = MemoryService(
-        repository=object(),  # type: ignore[arg-type]
         **dependencies,
     )
 

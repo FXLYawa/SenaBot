@@ -18,7 +18,7 @@ from .models import (
     MemorySupersedeResult,
     MemoryWriteEnvelope,
 )
-from .protocols import MemoryChangeRepositoryProtocol
+from .protocols import MemoryRepositoryProtocol
 
 
 def _new_item_id() -> str:
@@ -69,7 +69,7 @@ class MemoryChangeExecutor:
 
     def __init__(
         self,
-        repository: MemoryChangeRepositoryProtocol,
+        repository: MemoryRepositoryProtocol,
         item_id_factory: Callable[[], str] = _new_item_id,
     ) -> None:
         self._repository = repository

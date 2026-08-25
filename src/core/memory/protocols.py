@@ -5,17 +5,14 @@ from typing import TYPE_CHECKING, Protocol
 
 from .change_plan import MemoryChangePlan
 from .models import (
-    Memory,
     MemoryCandidate,
     MemoryExtractionContext,
     MemoryMaterializationInput,
     MemoryPayload,
-    MemoryQueryCriteria,
     MemoryRecallContext,
     MemoryReviewInput,
     MemoryRetrievalCandidate,
     MemorySupersedeResult,
-    MemoryUpdateDecision,
     MemoryItem,
     MemoryWriteEnvelope,
 )
@@ -25,34 +22,6 @@ if TYPE_CHECKING:
         MemoryChangeExecutionInput,
         MemoryChangeExecutionResult,
     )
-
-
-class MemoryRepositoryProtocol(Protocol):
-    """规定 Memory 层访问底层数据时必须具备的能力。"""
-
-    async def query(self, criteria: MemoryQueryCriteria) -> list[MemoryItem]:
-        ...
-
-    async def save(self, memory: Memory) -> Memory:
-        ...
-
-    async def find_by_source_event_id(self, source_event_id: str) -> Memory | None:
-        ...
-
-    async def find_by_operation_id(self, operation_id: str) -> Memory | None:
-        ...
-
-    async def update(
-        self,
-        memory: Memory,
-    ) -> Memory:
-        ...
-
-    async def delete(
-        self,
-        memory_id: str,
-    ) -> None:
-        ...
 
 
 class MemoryExtractorProtocol(Protocol):
@@ -124,20 +93,7 @@ class MemoryLLMProtocol(Protocol):
         ...
 
 
-class MemoryUpdaterProtocol(Protocol):
-    """
-    负责比较新记忆和检索记忆,并给出最终进行的操作
-    """
-
-    async def decide(
-        self,
-        candidate: MemoryCandidate,
-        existing_memories: list[Memory],
-    ) -> MemoryUpdateDecision:
-        ...
-
-
-class MemoryChangeRepositoryProtocol(Protocol):
+class MemoryRepositoryProtocol(Protocol):
     """新 MemoryItem 变更链路所依赖的持久化端口。"""
 
     async def add(

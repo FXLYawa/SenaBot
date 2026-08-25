@@ -1,11 +1,11 @@
+from collections.abc import Iterable
+
 from .models import (
     MemoryItem,
     MemoryRecallContext,
-    MemoryQueryCriteria,
     MemoryRetrievalCandidate,
     MemoryScopeKind,
 )
-from .protocols import MemoryRepositoryProtocol
 
 
 def is_scope_accessible(
@@ -30,77 +30,31 @@ def is_scope_accessible(
     return not item.scopes.isdisjoint(context.scopes)
 
 
-def _get_required_scope_id(
-    context: MemoryRecallContext,
-    kind: MemoryScopeKind,
-) -> str:
-    """临时转换兼容函数"""
-
-    matching_ids = [
-        scope.scope_id
-        for scope in context.scopes
-        if scope.kind is kind
-    ]
-
-    if len(matching_ids) != 1:
-        raise ValueError(
-            f"legacy retriever requires exactly one "
-            f"{kind.value} scope"
-        )
-
-    scope_id = matching_ids[0]
-
-    if scope_id is None:
-        raise ValueError(
-            f"legacy retriever requires a non-null "
-            f"{kind.value} scope"
-        )
-
-    return scope_id
-
-
 class SimpleMemoryRetriever:
-    """MVP 阶段的简单长期记忆检索器。"""
+    """基于内存快照和 Scope 过滤的占位检索器。
+
+    该实现只用于本地测试和 MVP 编排验证；它接收 query embedding，
+    但不计算语义相关性，也不代表正式 Data 层检索能力。
+    """
 
     def __init__(
         self,
-        repository: MemoryRepositoryProtocol,
+        items: Iterable[MemoryItem] = (),
     ) -> None:
-        self._repository = repository
+        self._items = tuple(items)
 
-    # 兼容旧 FileMemoryRepository。
-    # Repository 迁移到 MemoryItem 后删除此转换。
     async def retrieve(
         self,
         query_embedding: list[float],
         *,
         context: MemoryRecallContext,
     ) -> list[MemoryRetrievalCandidate]:
-        """到向量数据库中检索对应向量"""
-
-        # MVP 仅按 scope 获取候选，后续替换为真实向量检索。
-        criteria = MemoryQueryCriteria(
-            query_text="",
-            user_id=_get_required_scope_id(
-                context,
-                MemoryScopeKind.USER,
-            ),
-            session_id=_get_required_scope_id(
-                context,
-                MemoryScopeKind.SESSION,
-            ),
-            group_id=_get_required_scope_id(
-                context,
-                MemoryScopeKind.GROUP,
-            ),
-        )
-        # 简单占位实现，暂不根据 query_embedding 计算相关性分数。
-        memories = await self._repository.query(criteria)
-
+        """按 Scope 过滤内存快照并包装为零分候选。"""
         return [
             MemoryRetrievalCandidate(
-                memory=memory,
+                memory=item,
                 score=0.0,
             )
-            for memory in memories
+            for item in self._items
+            if is_scope_accessible(item, context)
         ]
