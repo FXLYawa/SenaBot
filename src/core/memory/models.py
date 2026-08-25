@@ -330,6 +330,36 @@ class MemoryMaterializationInput:
 
 
 @dataclass(frozen=True)
+class MemoryFormationInput:
+    """候选记忆进入 Formation 主链路所需的可信上下文。"""
+
+    candidate: MemoryCandidate
+    provenance: tuple[Provenance, ...]
+    recorded_at: datetime
+    recall_context: MemoryRecallContext
+    memory_space_id: str
+    scopes: frozenset[MemoryScopeRef]
+    operation_id: str
+
+    def __post_init__(self) -> None:
+        _require_provenance(self.provenance)
+        _require_non_blank(self.memory_space_id, "memory_space_id")
+        _require_non_blank(self.operation_id, "operation_id")
+
+        if not self.scopes:
+            raise ValueError("memory scopes must not be empty")
+
+        has_global_scope = any(
+            scope.kind is MemoryScopeKind.GLOBAL
+            for scope in self.scopes
+        )
+        if has_global_scope and len(self.scopes) != 1:
+            raise ValueError(
+                "global scope cannot be combined with other scopes"
+            )
+
+
+@dataclass(frozen=True)
 class MemoryReviewInput:
     """审查已成形 Payload 及其共享的相关记忆快照。"""
 
@@ -346,6 +376,14 @@ class MemoryWriteEnvelope:
 
     def __post_init__(self) -> None:
         _require_non_blank(self.operation_id, "operation_id")
+
+
+@dataclass(frozen=True)
+class MemorySupersedeResult:
+    """持久化端口执行替代操作后返回的新旧版本。"""
+
+    previous_item: MemoryItem
+    replacement_item: MemoryItem
 
 
 class MemoryUpdateAction(str, Enum):

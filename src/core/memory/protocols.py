@@ -1,4 +1,7 @@
-from typing import Protocol
+from __future__ import annotations
+
+from datetime import datetime
+from typing import TYPE_CHECKING, Protocol
 
 from .change_plan import MemoryChangePlan
 from .models import (
@@ -11,9 +14,17 @@ from .models import (
     MemoryRecallContext,
     MemoryReviewInput,
     MemoryRetrievalCandidate,
+    MemorySupersedeResult,
     MemoryUpdateDecision,
     MemoryItem,
+    MemoryWriteEnvelope,
 )
+
+if TYPE_CHECKING:
+    from .executor import (
+        MemoryChangeExecutionInput,
+        MemoryChangeExecutionResult,
+    )
 
 
 class MemoryRepositoryProtocol(Protocol):
@@ -126,6 +137,34 @@ class MemoryUpdaterProtocol(Protocol):
         ...
 
 
+class MemoryChangeRepositoryProtocol(Protocol):
+    """新 MemoryItem 变更链路所依赖的持久化端口。"""
+
+    async def add(
+        self,
+        envelope: MemoryWriteEnvelope,
+    ) -> MemoryItem:
+        ...
+
+    async def end_fact_validity(
+        self,
+        *,
+        operation_id: str,
+        target_item_id: str,
+        valid_to: datetime,
+    ) -> MemoryItem:
+        ...
+
+    async def supersede(
+        self,
+        *,
+        operation_id: str,
+        target_item_id: str,
+        replacement: MemoryWriteEnvelope,
+    ) -> MemorySupersedeResult:
+        ...
+
+
 class MemoryReviewerProtocol(Protocol):
     """根据payload和related_item生成具体执行计划"""
 
@@ -133,4 +172,14 @@ class MemoryReviewerProtocol(Protocol):
         self,
         input_data: MemoryReviewInput,
     ) -> MemoryChangePlan:
+        ...
+
+
+class MemoryChangeExecutorProtocol(Protocol):
+    """执行经过校验的 Memory 变更计划。"""
+
+    async def execute(
+        self,
+        input_data: MemoryChangeExecutionInput,
+    ) -> MemoryChangeExecutionResult:
         ...

@@ -8,26 +8,36 @@ from .contracts import (
     MemoryWriteRequest,
     MemoryWriteResult,
 )
+from .executor import (
+    MemoryChangeExecutionInput,
+    MemoryChangeExecutionResult,
+)
 from .models import (
     Memory,
     MemoryCandidate,
     MemoryExtractionContext,
     MemoryExtractionInput,
     MemoryExtractionMessage,
+    MemoryFormationInput,
+    MemoryMaterializationInput,
     MemoryQueryCriteria,
+    MemoryRecallContext,
+    MemoryReviewInput,
+    MemoryScopeKind,
+    MemoryScopeRef,
     MemoryUpdateAction,
     MemoryUpdateDecision,
     MemoryUpdateInput,
-    MemoryRecallContext,
-    MemoryScopeRef,
-    MemoryScopeKind,
 )
 from .protocols import (
+    MemoryChangeExecutorProtocol,
     MemoryEmbeddingProtocol,
     MemoryExtractorProtocol,
+    MemoryMaterializerProtocol,
     MemoryRepositoryProtocol,
     MemoryRerankerProtocol,
     MemoryRetrieverProtocol,
+    MemoryReviewerProtocol,
     MemoryUpdaterProtocol,
 )
 
@@ -43,6 +53,9 @@ class MemoryService:
         embedder: MemoryEmbeddingProtocol | None = None,
         retriever: MemoryRetrieverProtocol | None = None,
         reranker: MemoryRerankerProtocol | None = None,
+        materializer: MemoryMaterializerProtocol | None = None,
+        reviewer: MemoryReviewerProtocol | None = None,
+        executor: MemoryChangeExecutorProtocol | None = None,
     ) -> None:
         self.repository = repository
         self.extractor = extractor
@@ -50,6 +63,9 @@ class MemoryService:
         self.embedder = embedder
         self.retriever = retriever
         self.reranker = reranker
+        self.materializer = materializer
+        self.reviewer = reviewer
+        self.executor = executor
 
     async def query(
         self,
@@ -161,6 +177,67 @@ class MemoryService:
             session_id=request.session_id,
             user_id=request.user_id,
             memory_id=saved_memory.memory_id,
+        )
+
+    async def form(
+        self,
+        input_data: MemoryFormationInput,
+    ) -> MemoryChangeExecutionResult:
+        """将候选召回、成形、审查并执行为正式 Memory 变更。"""
+
+        if self.embedder is None:
+            raise RuntimeError("memory embedder is not configured")
+
+        if self.retriever is None:
+            raise RuntimeError("memory retriever is not configured")
+
+        if self.materializer is None:
+            raise RuntimeError("memory materializer is not configured")
+
+        if self.reviewer is None:
+            raise RuntimeError("memory reviewer is not configured")
+
+        if self.executor is None:
+            raise RuntimeError("memory executor is not configured")
+
+        query_embedding = await self.embedder.embed(
+            input_data.candidate.content
+        )
+
+        retrieval_candidates = await self.retriever.retrieve(
+            query_embedding,
+            context=input_data.recall_context,
+        )
+
+        related_items = tuple(
+            candidate.memory
+            for candidate in retrieval_candidates
+        )
+
+        payload = await self.materializer.materialize(
+            MemoryMaterializationInput(
+                candidate=input_data.candidate,
+                provenance=input_data.provenance,
+                recorded_at=input_data.recorded_at,
+                related_items=related_items,
+            )
+        )
+
+        plan = await self.reviewer.review(
+            MemoryReviewInput(
+                payload=payload,
+                related_items=related_items,
+            )
+        )
+
+        return await self.executor.execute(
+            MemoryChangeExecutionInput(
+                plan=plan,
+                related_items=related_items,
+                memory_space_id=input_data.memory_space_id,
+                scopes=input_data.scopes,
+                operation_id=input_data.operation_id,
+            )
         )
 
     async def extract(
