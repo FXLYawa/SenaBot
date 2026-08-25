@@ -1,7 +1,7 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, ClassVar, TypeAlias
+from typing import ClassVar, TypeAlias
 
 
 def _require_non_blank(value: str, field_name: str) -> None:
@@ -238,9 +238,14 @@ class MemoryExtractionMessage:
     用户与AI的原始聊天消息
     """
 
-    # 角色,一般只有user和AI两个字段,设计数据库时需要加上字段约束
+    message_id: str
     role: str
     content: str
+
+    def __post_init__(self) -> None:
+        _require_non_blank(self.message_id, "message_id")
+        _require_non_blank(self.role, "message role")
+        _require_non_blank(self.content, "message content")
 
 
 @dataclass
@@ -256,15 +261,22 @@ class MemoryExtractionInput:
     """
 
     messages: list[MemoryExtractionMessage]
-    # 预留给后续来源信息贯穿（如 source_event_id 和作用域标识）。
-    metadata: dict[str, Any] = field(default_factory=dict)
+    provenance: tuple[Provenance, ...]
+
+    def __post_init__(self) -> None:
+        _require_provenance(self.provenance)
 
 
 @dataclass
 class MemoryExtractionContext:
+    """组装后的上下文"""
     new_messages: list[MemoryExtractionMessage]
     summary: str | None
     recent_messages: list[MemoryExtractionMessage]
+    provenance: tuple[Provenance, ...]
+
+    def __post_init__(self) -> None:
+        _require_provenance(self.provenance)
 
 
 @dataclass
@@ -276,9 +288,26 @@ class MemoryCandidate:
     尚未经过后续筛选,去重,冲突判断和正式写入
     """
 
+    candidate_id: str
     content: str
-    # 一些候选的额外信息,如果没有传metadata,自动创建一个新的空字典
-    metadata: dict[str, Any] = field(default_factory=dict)
+    provenance: tuple[Provenance, ...]
+    source_message_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _require_non_blank(self.candidate_id, "candidate_id")
+        _require_non_blank(self.content, "candidate content")
+        _require_provenance(self.provenance)
+
+        if not self.source_message_ids:
+            raise ValueError("source_message_ids must not be empty")
+
+        for source_message_id in self.source_message_ids:
+            _require_non_blank(source_message_id, "source_message_id")
+
+        if len(set(self.source_message_ids)) != len(
+            self.source_message_ids
+        ):
+            raise ValueError("source_message_ids must not contain duplicates")
 
 
 @dataclass(frozen=True)
@@ -286,12 +315,8 @@ class MemoryMaterializationInput:
     """将原始候选转换为领域 Payload 所需的信息。"""
 
     candidate: MemoryCandidate
-    provenance: tuple[Provenance, ...]
     recorded_at: datetime
     related_items: tuple[MemoryItem, ...] = ()
-
-    def __post_init__(self) -> None:
-        _require_provenance(self.provenance)
 
 
 @dataclass(frozen=True)
@@ -299,7 +324,6 @@ class MemoryFormationInput:
     """候选记忆进入 Formation 主链路所需的可信上下文。"""
 
     candidate: MemoryCandidate
-    provenance: tuple[Provenance, ...]
     recorded_at: datetime
     recall_context: MemoryRecallContext
     memory_space_id: str
@@ -307,7 +331,6 @@ class MemoryFormationInput:
     operation_id: str
 
     def __post_init__(self) -> None:
-        _require_provenance(self.provenance)
         _require_non_blank(self.memory_space_id, "memory_space_id")
         _require_non_blank(self.operation_id, "operation_id")
 

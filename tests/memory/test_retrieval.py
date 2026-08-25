@@ -112,6 +112,36 @@ class RecordingReranker:
         return list(reversed(candidates))
 
 
+@pytest.mark.parametrize(
+    "missing_dependency",
+    [
+        "extractor",
+        "embedder",
+        "retriever",
+        "reranker",
+        "materializer",
+        "reviewer",
+        "executor",
+    ],
+)
+def test_service_requires_every_dependency_at_construction(
+    missing_dependency: str,
+) -> None:
+    dependencies = {
+        "extractor": object(),
+        "embedder": object(),
+        "retriever": object(),
+        "reranker": object(),
+        "materializer": object(),
+        "reviewer": object(),
+        "executor": object(),
+    }
+    del dependencies[missing_dependency]
+
+    with pytest.raises(TypeError, match=missing_dependency):
+        MemoryService(**dependencies)
+
+
 @pytest.mark.asyncio
 async def test_query_runs_complete_retrieval_pipeline():
     calls: list[object] = []
@@ -122,9 +152,13 @@ async def test_query_runs_complete_retrieval_pipeline():
         MemoryRetrievalCandidate(second_memory, score=0.8),
     ]
     service = MemoryService(
+        extractor=object(),
         embedder=RecordingEmbedder(calls),
         retriever=RecordingRetriever(calls, candidates),
         reranker=RecordingReranker(calls),
+        materializer=object(),
+        reviewer=object(),
+        executor=object(),
     )
 
     result = await service.query(
@@ -174,9 +208,13 @@ async def test_query_runs_complete_retrieval_pipeline():
 async def test_query_returns_empty_result_when_retriever_has_no_candidates():
     calls: list[object] = []
     service = MemoryService(
+        extractor=object(),
         embedder=RecordingEmbedder(calls),
         retriever=RecordingRetriever(calls, []),
         reranker=RecordingReranker(calls),
+        materializer=object(),
+        reviewer=object(),
+        executor=object(),
     )
 
     result = await service.query(
@@ -191,73 +229,6 @@ async def test_query_returns_empty_result_when_retriever_has_no_candidates():
 
     assert result.memories == []
     assert calls[-1] == ("rerank", "没有匹配的记忆", [])
-
-
-@pytest.mark.asyncio
-async def test_query_requires_embedder():
-    service = MemoryService(
-        retriever=RecordingRetriever([], []),
-    )
-
-    with pytest.raises(
-        RuntimeError,
-        match="memory embedder is not configured",
-    ):
-        await service.query(
-            MemoryQueryRequest(
-                query_id="query-001",
-                user_id="user-001",
-                session_id="session-001",
-                group_id="group-001",
-                query_text="跑步",
-            )
-        )
-
-
-@pytest.mark.asyncio
-async def test_query_requires_retriever():
-    service = MemoryService(
-        embedder=RecordingEmbedder([]),
-    )
-
-    with pytest.raises(
-        RuntimeError,
-        match="memory retriever is not configured",
-    ):
-        await service.query(
-            MemoryQueryRequest(
-                query_id="query-001",
-                user_id="user-001",
-                session_id="session-001",
-                group_id="group-001",
-                query_text="跑步",
-            )
-        )
-
-
-@pytest.mark.asyncio
-async def test_query_requires_reranker():
-    calls: list[object] = []
-    service = MemoryService(
-        embedder=RecordingEmbedder(calls),
-        retriever=RecordingRetriever(calls, []),
-    )
-
-    with pytest.raises(
-        RuntimeError,
-        match="memory reranker is not configured",
-    ):
-        await service.query(
-            MemoryQueryRequest(
-                query_id="query-001",
-                user_id="user-001",
-                session_id="session-001",
-                group_id="group-001",
-                query_text="跑步",
-            )
-        )
-
-    assert calls == []
 
 
 @pytest.mark.asyncio

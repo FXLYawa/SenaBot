@@ -24,6 +24,20 @@ from core.memory.models import (
 from core.memory.protocols import MemoryMaterializerProtocol
 
 
+PROVENANCE = (Provenance("event", "event-001"),)
+
+
+def create_candidate(
+    content: str = "用户喜欢跑步",
+) -> MemoryCandidate:
+    return MemoryCandidate(
+        candidate_id="candidate-001",
+        content=content,
+        provenance=PROVENANCE,
+        source_message_ids=("message-001",),
+    )
+
+
 class FakeMemoryMaterializer:
     def __init__(self, payload: MemoryPayload) -> None:
         self.payload = payload
@@ -50,7 +64,7 @@ class FakeLLM:
 def create_fact() -> Fact:
     return Fact(
         content="用户喜欢跑步",
-        provenance=(Provenance("event", "event-001"),),
+        provenance=PROVENANCE,
         recorded_at=datetime.now(timezone.utc),
     )
 
@@ -76,8 +90,7 @@ def materialization_input(
     related_items: tuple[MemoryItem, ...] = (),
 ) -> MemoryMaterializationInput:
     return MemoryMaterializationInput(
-        candidate=MemoryCandidate(content="用户最近开始玩 FF14"),
-        provenance=(Provenance("event", "event-001"),),
+        candidate=create_candidate("用户最近开始玩 FF14"),
         recorded_at=datetime(2026, 8, 25, tzinfo=timezone.utc),
         related_items=related_items,
     )
@@ -85,20 +98,20 @@ def materialization_input(
 
 def test_materialization_input_defaults_to_no_related_items():
     input_data = MemoryMaterializationInput(
-        candidate=MemoryCandidate(content="用户喜欢跑步"),
-        provenance=(Provenance("event", "event-001"),),
+        candidate=create_candidate(),
         recorded_at=datetime.now(timezone.utc),
     )
 
     assert input_data.related_items == ()
 
 
-def test_materialization_input_requires_provenance():
+def test_candidate_requires_provenance():
     with pytest.raises(ValueError, match="provenance must not be empty"):
-        MemoryMaterializationInput(
-            candidate=MemoryCandidate(content="用户喜欢跑步"),
+        MemoryCandidate(
+            candidate_id="candidate-001",
+            content="用户喜欢跑步",
             provenance=(),
-            recorded_at=datetime.now(timezone.utc),
+            source_message_ids=("message-001",),
         )
 
 
@@ -109,8 +122,7 @@ async def test_materializer_converts_candidate_to_typed_payload():
         payload
     )
     input_data = MemoryMaterializationInput(
-        candidate=MemoryCandidate(content="用户喜欢跑步"),
-        provenance=(Provenance("event", "event-001"),),
+        candidate=create_candidate(),
         recorded_at=datetime.now(timezone.utc),
     )
 
@@ -164,7 +176,7 @@ async def test_llm_materializer_builds_fact_with_trusted_fields():
 
     assert result == Fact(
         content="用户最近开始玩 FF14",
-        provenance=input_data.provenance,
+        provenance=input_data.candidate.provenance,
         recorded_at=input_data.recorded_at,
         valid_from=datetime(2026, 8, 1, tzinfo=timezone.utc),
         valid_to=None,
@@ -205,7 +217,7 @@ async def test_llm_materializer_builds_experience():
         Entity("user", "user-001"),
         Entity("agent", "sena"),
     )
-    assert result.provenance == input_data.provenance
+    assert result.provenance == input_data.candidate.provenance
     assert result.recorded_at == input_data.recorded_at
 
 
@@ -230,7 +242,7 @@ async def test_llm_materializer_builds_understanding_from_related_evidence():
 
     assert result == Understanding(
         content="用户倾向于通过运动维持健康",
-        provenance=input_data.provenance,
+        provenance=input_data.candidate.provenance,
         evidence_item_ids=(related_item.item_id,),
         recorded_at=input_data.recorded_at,
     )
@@ -276,7 +288,7 @@ async def test_llm_materializer_builds_knowledge():
 
     assert result == Knowledge(
         content="Python dataclass 可以生成基础数据模型",
-        provenance=input_data.provenance,
+        provenance=input_data.candidate.provenance,
         recorded_at=input_data.recorded_at,
     )
 

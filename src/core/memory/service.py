@@ -136,7 +136,6 @@ class MemoryService:
         payload = await self.materializer.materialize(
             MemoryMaterializationInput(
                 candidate=input_data.candidate,
-                provenance=input_data.provenance,
                 recorded_at=input_data.recorded_at,
                 related_items=related_items,
             )
@@ -174,10 +173,12 @@ class MemoryService:
         if self.extractor is None:
             raise RuntimeError("memory extractor is not configured")
 
+        #得到组装后的上下文
         context = MemoryExtractionContext(
             new_messages=input_data.messages,
             recent_messages=recent_messages,
             summary=summary,
+            provenance=input_data.provenance,
         )
 
         return await self.extractor.extract(context)

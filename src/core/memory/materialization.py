@@ -122,7 +122,7 @@ class LLMMemoryMaterializer:
                     payload_data.get("content"),
                     "fact content",
                 ),
-                provenance=input_data.provenance,
+                provenance=input_data.candidate.provenance,
                 recorded_at=input_data.recorded_at,
                 valid_from=cls._parse_optional_datetime(
                     payload_data.get("valid_from"),
@@ -141,7 +141,7 @@ class LLMMemoryMaterializer:
                     payload_data.get("summary"),
                     "experience summary",
                 ),
-                provenance=input_data.provenance,
+                provenance=input_data.candidate.provenance,
                 participants=cls._parse_participants(
                     payload_data.get("participants")
                 ),
@@ -163,7 +163,7 @@ class LLMMemoryMaterializer:
                     payload_data.get("content"),
                     "understanding content",
                 ),
-                provenance=input_data.provenance,
+                provenance=input_data.candidate.provenance,
                 evidence_item_ids=cls._parse_evidence_item_ids(
                     payload_data.get("evidence_item_ids"),
                     input_data.related_items,
@@ -177,7 +177,7 @@ class LLMMemoryMaterializer:
                 payload_data.get("content"),
                 "knowledge content",
             ),
-            provenance=input_data.provenance,
+            provenance=input_data.candidate.provenance,
             recorded_at=input_data.recorded_at,
         )
 

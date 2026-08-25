@@ -11,12 +11,14 @@ MEMORY_EXTRACTION_PROMPT = """
 4. 没有值得记录的信息时返回空列表。
 5. 仅返回 JSON，不要输出其他内容。
 6. Assistant 的内容只能用于帮助理解用户消息，不得把 Assistant 的推测、建议或未经用户确认的信息作为用户事实提取。
+7. 每条候选必须通过 source_message_ids 列出支持它的当前新消息 ID，不得引用历史消息。
 
 输出格式：
 {{
   "memories": [
     {{
-      "content": "..."
+      "content": "...",
+      "source_message_ids": ["message-001"]
     }}
   ]
 }}

@@ -29,6 +29,15 @@ USER_SCOPE = MemoryScopeRef(MemoryScopeKind.USER, "user-001")
 SCOPES = frozenset({USER_SCOPE})
 
 
+def create_candidate(content: str) -> MemoryCandidate:
+    return MemoryCandidate(
+        candidate_id="candidate-001",
+        content=content,
+        provenance=PROVENANCE,
+        source_message_ids=("message-001",),
+    )
+
+
 def create_fact(content: str) -> Fact:
     return Fact(
         content=content,
@@ -132,7 +141,7 @@ async def test_formation_runs_complete_pipeline_with_shared_snapshot():
     retrieval_candidates = [
         MemoryRetrievalCandidate(memory=related_item, score=0.9)
     ]
-    candidate = MemoryCandidate(content="用户搬到上海了")
+    candidate = create_candidate("用户搬到上海了")
     payload = create_fact("用户居住在上海")
     plan = MemoryChangePlan(
         operations=(AddMemoryItem(payload=payload),)
@@ -146,8 +155,10 @@ async def test_formation_runs_complete_pipeline_with_shared_snapshot():
     executor = RecordingExecutor(calls, execution)
     recall_context = MemoryRecallContext(scopes=SCOPES)
     service = MemoryService(
+        extractor=object(),
         embedder=embedder,
         retriever=retriever,
+        reranker=object(),
         materializer=materializer,
         reviewer=reviewer,
         executor=executor,
@@ -156,7 +167,6 @@ async def test_formation_runs_complete_pipeline_with_shared_snapshot():
     result = await service.form(
         MemoryFormationInput(
             candidate=candidate,
-            provenance=PROVENANCE,
             recorded_at=RECORDED_AT,
             recall_context=recall_context,
             memory_space_id="space-001",
@@ -205,8 +215,10 @@ async def test_formation_supports_no_related_items():
         MemoryChangeExecutionResult(),
     )
     service = MemoryService(
+        extractor=object(),
         embedder=RecordingEmbedder(calls),
         retriever=RecordingRetriever(calls, []),
+        reranker=object(),
         materializer=materializer,
         reviewer=reviewer,
         executor=executor,
@@ -214,8 +226,7 @@ async def test_formation_supports_no_related_items():
 
     result = await service.form(
         MemoryFormationInput(
-            candidate=MemoryCandidate(content="用户喜欢跑步"),
-            provenance=PROVENANCE,
+            candidate=create_candidate("用户喜欢跑步"),
             recorded_at=RECORDED_AT,
             recall_context=MemoryRecallContext(scopes=SCOPES),
             memory_space_id="space-001",
@@ -234,60 +245,8 @@ async def test_formation_supports_no_related_items():
 
 
 @pytest.mark.parametrize(
-    ("missing_dependency", "message"),
-    [
-        ("embedder", "memory embedder is not configured"),
-        ("retriever", "memory retriever is not configured"),
-        ("materializer", "memory materializer is not configured"),
-        ("reviewer", "memory reviewer is not configured"),
-        ("executor", "memory executor is not configured"),
-    ],
-)
-@pytest.mark.asyncio
-async def test_formation_requires_every_pipeline_dependency(
-    missing_dependency,
-    message,
-):
-    calls: list[str] = []
-    payload = create_fact("用户喜欢跑步")
-    plan = MemoryChangePlan(
-        operations=(AddMemoryItem(payload=payload),)
-    )
-    dependencies = {
-        "embedder": RecordingEmbedder(calls),
-        "retriever": RecordingRetriever(calls, []),
-        "materializer": RecordingMaterializer(calls, payload),
-        "reviewer": RecordingReviewer(calls, plan),
-        "executor": RecordingExecutor(
-            calls,
-            MemoryChangeExecutionResult(),
-        ),
-    }
-    dependencies[missing_dependency] = None
-    service = MemoryService(
-        **dependencies,
-    )
-
-    with pytest.raises(RuntimeError, match=message):
-        await service.form(
-            MemoryFormationInput(
-                candidate=MemoryCandidate(content="用户喜欢跑步"),
-                provenance=PROVENANCE,
-                recorded_at=RECORDED_AT,
-                recall_context=MemoryRecallContext(scopes=SCOPES),
-                memory_space_id="space-001",
-                scopes=SCOPES,
-                operation_id="operation-001",
-            )
-        )
-
-    assert calls == []
-
-
-@pytest.mark.parametrize(
     ("field_name", "value", "message"),
     [
-        ("provenance", (), "provenance must not be empty"),
         ("memory_space_id", " ", "memory_space_id must not be blank"),
         ("scopes", frozenset(), "memory scopes must not be empty"),
         ("operation_id", " ", "operation_id must not be blank"),
@@ -299,8 +258,7 @@ def test_formation_input_rejects_invalid_context(
     message,
 ):
     values = {
-        "candidate": MemoryCandidate(content="用户喜欢跑步"),
-        "provenance": PROVENANCE,
+        "candidate": create_candidate("用户喜欢跑步"),
         "recorded_at": RECORDED_AT,
         "recall_context": MemoryRecallContext(scopes=SCOPES),
         "memory_space_id": "space-001",
