@@ -17,7 +17,10 @@ from .models import (
     MemoryQueryCriteria,
     MemoryUpdateAction,
     MemoryUpdateDecision,
-    MemoryUpdateInput, MemoryRecallContext, MemoryScopeRef, MemoryScopeKind,
+    MemoryUpdateInput,
+    MemoryRecallContext,
+    MemoryScopeRef,
+    MemoryScopeKind,
 )
 from .protocols import (
     MemoryEmbeddingProtocol,
@@ -64,7 +67,7 @@ class MemoryService:
             raise RuntimeError("memory reranker is not configured")
 
         query_embedding = await self.embedder.embed(request.query_text)
-        query_context=MemoryRecallContext(
+        query_context = MemoryRecallContext(
             scopes=frozenset(
                 {
                     MemoryScopeRef(

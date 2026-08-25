@@ -7,15 +7,17 @@ from .models import (
     MemoryMaterializationInput,
     MemoryPayload,
     MemoryQueryCriteria,
+    MemoryRecallContext,
     MemoryRetrievalCandidate,
-    MemoryUpdateDecision, MemoryRecallContext,
+    MemoryUpdateDecision,
+    MemoryItem,
 )
 
 
 class MemoryRepositoryProtocol(Protocol):
     """规定 Memory 层访问底层数据时必须具备的能力。"""
 
-    async def query(self, criteria: MemoryQueryCriteria) -> list[Memory]:
+    async def query(self, criteria: MemoryQueryCriteria) -> list[MemoryItem]:
         ...
 
     async def save(self, memory: Memory) -> Memory:
@@ -80,7 +82,7 @@ class MemoryRetrieverProtocol(Protocol):
         self,
         query_embedding: list[float],
         *,
-        context:MemoryRecallContext,
+        context: MemoryRecallContext,
     ) -> list[MemoryRetrievalCandidate]:
         ...
 

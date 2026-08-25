@@ -12,6 +12,8 @@ class SimpleMemoryReranker:
         query: str,
         candidates: list[MemoryRetrievalCandidate],
     ) -> list[MemoryRetrievalCandidate]:
+        """对检索出的多个结果再做一次重排序"""
+
         return sorted(
             candidates,
             key=lambda candidate: candidate.score,

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from .models import Memory
+from .models import MemoryItem
 
 
 @dataclass
@@ -34,7 +34,7 @@ class MemoryQueryResult:
     group_id: str
 
     #返回的记忆
-    memories: list[Memory]
+    memories: list[MemoryItem]
 
 
 @dataclass

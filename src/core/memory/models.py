@@ -86,8 +86,10 @@ class MemoryScopeKind(str, Enum):
 @dataclass(frozen=True)
 class MemoryScopeRef:
     """
-    记忆可供召回的范围,表明当前记忆允许在哪些场景使用
-    只作为第一级的召回边界检查
+    记忆的长期归属边界。
+
+    Scope 表示记忆属于哪个长期主体空间，不是未来使用场景的
+    白名单，也不决定 Agent 是否在当前场景披露或发布该信息。
     """
     kind: MemoryScopeKind
     scope_id: str | None
@@ -242,7 +244,7 @@ class MemoryItem:
 
 @dataclass(frozen=True)
 class MemoryRecallContext:
-    """一次记忆查询可以访问的空间和作用域"""
+    """当前召回场景中可用于粗粒度候选检索的长期主体。"""
 
     scopes: frozenset[MemoryScopeRef]
 
@@ -259,7 +261,9 @@ class MemoryQueryCriteria:
 
 @dataclass
 class MemoryRetrievalCandidate:
-    memory: Memory
+    """检索出来的记忆候选"""
+
+    memory: MemoryItem
     score: float
 
 

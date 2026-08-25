@@ -432,7 +432,7 @@ def test_scope_filter_rejects_different_user_scope():
     assert not is_scope_accessible(item, context)
 
 
-def test_scope_filter_requires_all_item_scopes():
+def test_scope_filter_matches_any_item_ownership_scope():
     user_scope = MemoryScopeRef(
         MemoryScopeKind.USER,
         "user-001",
@@ -450,9 +450,19 @@ def test_scope_filter_requires_all_item_scopes():
         frozenset({user_scope, group_scope}),
     )
 
-    assert not is_scope_accessible(
+    assert is_scope_accessible(
         item,
-        MemoryRecallContext(frozenset({user_scope})),
+        MemoryRecallContext(
+            frozenset(
+                {
+                    user_scope,
+                    MemoryScopeRef(
+                        MemoryScopeKind.GROUP,
+                        "another-group",
+                    ),
+                }
+            )
+        ),
     )
     assert is_scope_accessible(
         item,
@@ -466,6 +476,28 @@ def test_scope_filter_requires_all_item_scopes():
             frozenset({user_scope, group_scope, session_scope})
         ),
     )
+
+
+def test_scope_filter_rejects_context_without_matching_owner():
+    item = create_memory_item(
+        "item-001",
+        frozenset(
+            {
+                MemoryScopeRef(MemoryScopeKind.USER, "user-001"),
+                MemoryScopeRef(MemoryScopeKind.GROUP, "group-001"),
+            }
+        ),
+    )
+    context = MemoryRecallContext(
+        frozenset(
+            {
+                MemoryScopeRef(MemoryScopeKind.USER, "user-002"),
+                MemoryScopeRef(MemoryScopeKind.GROUP, "group-002"),
+            }
+        )
+    )
+
+    assert not is_scope_accessible(item, context)
 
 
 def test_global_item_is_visible_in_empty_context():
