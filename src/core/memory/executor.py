@@ -111,7 +111,8 @@ class MemoryChangeExecutor:
                     )
                 )
                 continue
-            # 使用新 Understanding 或 Knowledge 替代旧版本。
+
+            # 使用新 Understanding 或 Knowledge 替代旧版本,但保留痕迹。
             if isinstance(operation, SupersedeMemoryItem):
                 result = await self._execute_supersede(
                     operation,
@@ -135,6 +136,7 @@ class MemoryChangeExecutor:
         operation: AddMemoryItem,
         input_data: MemoryChangeExecutionInput,
     ) -> MemoryItem:
+
         """组装新增记忆并交给持久化端口。"""
         return await self._repository.add(
             self._build_envelope(operation.payload, input_data)
@@ -145,6 +147,7 @@ class MemoryChangeExecutor:
         operation: EndFactValidity,
         input_data: MemoryChangeExecutionInput,
     ) -> MemoryItem:
+        """结束旧 Fact 的有效期。"""
         return await self._repository.end_fact_validity(
             operation_id=input_data.operation_id,
             target_item_id=operation.target_item_id,
@@ -156,6 +159,7 @@ class MemoryChangeExecutor:
         operation: SupersedeMemoryItem,
         input_data: MemoryChangeExecutionInput,
     ) -> MemorySupersedeResult:
+        """使用新 Understanding 或 Knowledge 替代旧版本,但保留旧痕迹。"""
         return await self._repository.supersede(
             operation_id=input_data.operation_id,
             target_item_id=operation.target_item_id,
@@ -170,6 +174,8 @@ class MemoryChangeExecutor:
         payload: MemoryPayload,
         input_data: MemoryChangeExecutionInput,
     ) -> MemoryWriteEnvelope:
+
+        """把MemoryPayload转为正式写入对象"""
         return MemoryWriteEnvelope(
             operation_id=input_data.operation_id,
             item=MemoryItem(

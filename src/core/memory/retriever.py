@@ -49,7 +49,7 @@ class SimpleMemoryRetriever:
         *,
         context: MemoryRecallContext,
     ) -> list[MemoryRetrievalCandidate]:
-        """按 Scope 过滤内存快照并包装为零分候选。"""
+        """还没有具体实现。"""
         return [
             MemoryRetrievalCandidate(
                 memory=item,

@@ -34,13 +34,13 @@ class MemoryService:
 
     def __init__(
         self,
-        extractor: MemoryExtractorProtocol | None = None,
-        embedder: MemoryEmbeddingProtocol | None = None,
-        retriever: MemoryRetrieverProtocol | None = None,
-        reranker: MemoryRerankerProtocol | None = None,
-        materializer: MemoryMaterializerProtocol | None = None,
-        reviewer: MemoryReviewerProtocol | None = None,
-        executor: MemoryChangeExecutorProtocol | None = None,
+        extractor: MemoryExtractorProtocol,
+        embedder: MemoryEmbeddingProtocol,
+        retriever: MemoryRetrieverProtocol ,
+        reranker: MemoryRerankerProtocol ,
+        materializer: MemoryMaterializerProtocol ,
+        reviewer: MemoryReviewerProtocol ,
+        executor: MemoryChangeExecutorProtocol,
     ) -> None:
         self.extractor = extractor
         self.embedder = embedder
@@ -56,16 +56,11 @@ class MemoryService:
     ) -> MemoryQueryResult:
         """执行向量化、检索和重排，返回最终记忆列表。"""
 
-        if self.embedder is None:
-            raise RuntimeError("memory embedder is not configured")
 
-        if self.retriever is None:
-            raise RuntimeError("memory retriever is not configured")
-
-        if self.reranker is None:
-            raise RuntimeError("memory reranker is not configured")
-
+        #向量化输入
         query_embedding = await self.embedder.embed(request.query_text)
+
+        #得到允许召回的边界
         query_context = MemoryRecallContext(
             scopes=frozenset(
                 {
@@ -84,11 +79,14 @@ class MemoryService:
                 }
             )
         )
+
+        #数据库检索,得到候选的记忆
         candidates = await self.retriever.retrieve(
             query_embedding,
             context=query_context,
         )
 
+        #进行精度更高的重排序,得到最终结果
         candidates = await self.reranker.rerank(
             request.query_text,
             candidates,
@@ -96,6 +94,7 @@ class MemoryService:
 
         memories = [candidate.memory for candidate in candidates]
 
+        #返回最终查询结果
         return MemoryQueryResult(
             query_id=request.query_id,
             user_id=request.user_id,
@@ -108,37 +107,32 @@ class MemoryService:
         self,
         input_data: MemoryFormationInput,
     ) -> MemoryChangeExecutionResult:
-        """将候选召回、成形、审查并执行为正式 Memory 变更。"""
+        """
+        接收Extraction,即记忆提取阶段的记忆
+        召回相关记忆
+        将相关记忆和候选交给materialize,得到Payload,即记忆的类型
+        根据Payload和相关记忆决定执行什么决策
+        正式入库
+        """
 
-        if self.embedder is None:
-            raise RuntimeError("memory embedder is not configured")
-
-        if self.retriever is None:
-            raise RuntimeError("memory retriever is not configured")
-
-        if self.materializer is None:
-            raise RuntimeError("memory materializer is not configured")
-
-        if self.reviewer is None:
-            raise RuntimeError("memory reviewer is not configured")
-
-        if self.executor is None:
-            raise RuntimeError("memory executor is not configured")
-
+        #向量化输入
         query_embedding = await self.embedder.embed(
             input_data.candidate.content
         )
 
+        #检索相关的记忆
         retrieval_candidates = await self.retriever.retrieve(
             query_embedding,
             context=input_data.recall_context,
         )
 
+        #得到相关记忆集合
         related_items = tuple(
             candidate.memory
             for candidate in retrieval_candidates
         )
 
+        #得到payload
         payload = await self.materializer.materialize(
             MemoryMaterializationInput(
                 candidate=input_data.candidate,
@@ -148,6 +142,8 @@ class MemoryService:
             )
         )
 
+
+        #确定执行计划
         plan = await self.reviewer.review(
             MemoryReviewInput(
                 payload=payload,
@@ -155,6 +151,7 @@ class MemoryService:
             )
         )
 
+        #执行正式入库
         return await self.executor.execute(
             MemoryChangeExecutionInput(
                 plan=plan,

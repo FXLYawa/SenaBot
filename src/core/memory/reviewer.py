@@ -14,7 +14,6 @@ from .models import (
     Entity,
     Experience,
     Fact,
-    MemoryItem,
     MemoryPayload,
     MemoryReviewInput,
 )
@@ -23,7 +22,7 @@ from .protocols import MemoryLLMProtocol
 
 
 class LLMMemoryReviewer:
-    """基于 LLM 判断已成形 Payload 与已有记忆的关系。"""
+    """基于 LLM 判断已成形 Payload 与已有记忆的关系,并执行相应的Plan。"""
 
     def __init__(self, llm: MemoryLLMProtocol) -> None:
         self._llm = llm
@@ -32,16 +31,21 @@ class LLMMemoryReviewer:
         self,
         input_data: MemoryReviewInput,
     ) -> MemoryChangePlan:
+        """根据Payload和related_item得到plan"""
         prompt = self._build_prompt(input_data)
         response = await self._llm.generate(prompt)
 
+        #把plan从字符串转换为Python对象
         plan = self._parse_response(response, input_data.payload)
+        #验证
         validate_memory_change_plan(plan, input_data.related_items)
 
         return plan
 
     @classmethod
     def _build_prompt(cls, input_data: MemoryReviewInput) -> str:
+
+        """把payload和相关记忆都转为字符串塞进prompt"""
         return MEMORY_REVIEW_PROMPT.format(
             payload=json.dumps(
                 cls._payload_data(input_data.payload),

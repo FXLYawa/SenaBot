@@ -96,10 +96,13 @@ def validate_memory_change_plan(
 ) -> None:
     """校验变更计划引用的目标及领域生命周期是否合法。"""
 
+    #转换成item_id->MemoryItem的映射,方便后面查询
     related_by_id = {
         item.item_id: item
         for item in related_items
     }
+
+    #set防止同一个旧 MemoryItem 在一个 plan 里被操作两次
     operated_target_ids: set[str] = set()
 
     for operation in plan.operations:
@@ -109,6 +112,7 @@ def validate_memory_change_plan(
         ):
             continue
 
+        #如果一个plan里出现重复操作,就直接报错
         if operation.target_item_id in operated_target_ids:
             raise ValueError(
                 "memory change plan must not operate on the same "
@@ -123,7 +127,7 @@ def validate_memory_change_plan(
                 "memory change operation target must reference "
                 "a related item"
             )
-
+        
         if isinstance(operation, EndFactValidity):
             _validate_end_fact_validity(operation, target)
             continue
