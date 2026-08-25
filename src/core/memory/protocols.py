@@ -1,5 +1,6 @@
 from typing import Protocol
 
+from .change_plan import MemoryChangePlan
 from .models import (
     Memory,
     MemoryCandidate,
@@ -8,6 +9,7 @@ from .models import (
     MemoryPayload,
     MemoryQueryCriteria,
     MemoryRecallContext,
+    MemoryReviewInput,
     MemoryRetrievalCandidate,
     MemoryUpdateDecision,
     MemoryItem,
@@ -121,4 +123,14 @@ class MemoryUpdaterProtocol(Protocol):
         candidate: MemoryCandidate,
         existing_memories: list[Memory],
     ) -> MemoryUpdateDecision:
+        ...
+
+
+class MemoryReviewerProtocol(Protocol):
+    """根据payload和related_item生成具体执行计划"""
+
+    async def review(
+        self,
+        input_data: MemoryReviewInput,
+    ) -> MemoryChangePlan:
         ...

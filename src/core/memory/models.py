@@ -330,6 +330,14 @@ class MemoryMaterializationInput:
 
 
 @dataclass(frozen=True)
+class MemoryReviewInput:
+    """审查已成形 Payload 及其共享的相关记忆快照。"""
+
+    payload: MemoryPayload
+    related_items: tuple[MemoryItem, ...]
+
+
+@dataclass(frozen=True)
 class MemoryWriteEnvelope:
     """正式 MemoryItem 及其写入操作上下文。"""
 
