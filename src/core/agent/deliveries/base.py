@@ -26,7 +26,6 @@ class EffectDelivery(Protocol[EffectT]):
         self,
         flow: EventFlow,
         effect: EffectT,
-        operation_id: str | None,
     ) -> None:
         """发布执行该 Effect 所需的公开事件。"""
 

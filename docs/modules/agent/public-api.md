@@ -10,7 +10,7 @@
 | 观察一次 Run 正常结束 | `agent.run.completed` |
 | 观察 Agent 内部执行失败 | `agent.run.failed` |
 | 观察 Sena 没有参与某次输入 | `agent.interaction.ignored` |
-| 为 Agent 返回记忆或输出结果 | 发布对应 Module 的完成事件 |
+| 为 Agent 返回记忆结果 | 发布对应 Memory 完成事件 |
 
 `agent.run.requested` 用于连接 Agent 内部流程，不是普通 Module 的调用入口。新功能如果需要触发一种行为，应先定义能表达实际业务含义的入口事件，再由 Agent 把它转换为 Run。这样不会绕过交互判断，也不会让调用方依赖 Agent 的内部状态。
 
@@ -30,9 +30,9 @@ Observation 告诉 Behavior 这次执行是刚刚开始，还是之前请求的�
 
 ### 等待与恢复
 
-如果一个 Effect 需要等待结果，它会携带或生成一个关联 ID。Dispatcher 在发布请求前把这个 ID 记到 Run 上；结果事件回来时，RunFlow 再用同一个 ID 恢复对应的任务。
+当外部结果会影响下一步决策时，Effect 会携带一个关联 ID。Dispatcher 在发布请求前把这个 ID 记到 Run 上；结果事件回来时，RunFlow 再用同一个 ID 恢复对应的任务。
 
-当前一个 Run 同时只能等待一个结果。一个 step 可以同时表达“发出回复并在交付结束后完成”，但不能并行等待两个不同操作。
+当前一个 Run 同时只能等待一个结果。Memory 查询和写入属于等待型 Effect，它们返回后会再次调用 Behavior。Reply Effect 在发布 Context 和 Body 请求的同一步配合 Finish Effect，完成本次 Run。
 
 ## 3. 对外事件
 
@@ -47,7 +47,7 @@ Payload 为 `AgentRunCompletedEventData`：
 | `behavior_type` | `str` | 必填 | 执行的 Behavior 类型 |
 | `outcome` | `str` | `completed` | 终止结果 |
 
-这里的“完成”是指 Agent 流程已经结束，并不等于所有外部动作都成功。例如 Body 发送失败后，Run 仍会走到 `agent.run.completed`，但 `outcome` 会保留失败状态。
+这里的“完成”是指 Agent 已经完成本次行为决策和事件发布。Body 随后独立处理输出请求，并通过自己的完成、部分完成或失败事件报告交付状态。
 
 ### `agent.run.failed`
 
@@ -70,7 +70,7 @@ Payload 为 `AgentRunFailedEventData`：
 | `behavior_failed` | Behavior 抛出异常或返回了不合法状态 |
 | `step_limit_exceeded` | Run 超过最大 step 数 |
 | `effect_not_supported` | 没有安装处理该 Effect 的 Delivery |
-| `step_invalid` | step 包含多个 Finish 或多个等待操作 |
+| `step_invalid` | step 包含多个 Finish、多个等待操作，或同时等待并结束 |
 | `step_stalled` | step 既不等待外部结果，也没有结束 Run |
 | `empty_step` | Runtime 迁移缺少 step 数据 |
 | `observation_unsupported` | Conversation Behavior 收到了无法处理的观察结果 |
@@ -150,11 +150,11 @@ Runtime 不会读取这些状态的业务字段，只检查它们是不是适合
 | `memory.write.completed` | Memory → Agent | 恢复等待写入结果的 Run |
 | `context.append.requested` | Agent → Context | 记录 Sena 回复 |
 | `body.output.requested` | Agent → Body | 请求交付回复 |
-| `body.output.completed` | Body → Agent | 输出全部完成 |
-| `body.output.partially_completed` | Body → Agent | 输出部分完成 |
-| `body.output.failed` | Body → Agent | 输出失败 |
+| `body.output.completed` | Body → 观察者 | 输出全部完成 |
+| `body.output.partially_completed` | Body → 观察者 | 输出部分完成 |
+| `body.output.failed` | Body → 观察者 | 输出失败 |
 
-这些请求事件都没有业务返回值。处理模块完成工作后发布结果事件，Agent 再从结果事件恢复 Run。
+这些请求事件都没有业务返回值。Memory 的完成事件用于恢复 Run；Body 的结果事件描述回复交付情况，由关心交付状态的模块订阅。
 
 ## 7. 当前限制
 

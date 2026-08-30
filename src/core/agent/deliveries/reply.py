@@ -32,22 +32,20 @@ class ReplyDelivery:
         self._display_name = display_name
 
     @staticmethod
-    def pending_operation_id(effect: ReplyEffect) -> str:
-        """Body 输出没有预生成 ID, 因此在交付前创建关联 ID。"""
+    def pending_operation_id(effect: ReplyEffect) -> None:
+        """无需等待，所以直接返回None"""
 
-        return new_id("output")
+        return None
 
 
     def emit(
         self,
         flow: EventFlow,
         effect: ReplyEffect,
-        operation_id: str | None,
     ) -> None:
         """发布角色回复的 Context 记录和 Body 输出请求事件"""
         
-        if operation_id is None:
-            raise ValueError("ReplyEffect requires a pending operation ID")
+        output_id = new_id("output")
         content = Content.from_text(effect.text)
         # 发布 Context 追加请求事件，确保角色回复被记录在主对话中
         flow.emit(
@@ -72,13 +70,11 @@ class ReplyDelivery:
         flow.emit(
             "body.output.requested",
             BodyOutputRequestData(
-                output_id=operation_id,
+                output_id=output_id,
                 route=effect.output_route,
                 scene=effect.scene,
                 content=content,
-                reply_to=OutputReplyInfo(
-                    platform_event_id=effect.reply_to_message_id,
-                )
+                reply_to=OutputReplyInfo(effect.reply_to_message_id)
                 if effect.reply_to_message_id
                 else None,
                 options=BodyOutputOptions(),

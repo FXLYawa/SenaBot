@@ -91,23 +91,19 @@ class AgentRuntime:
             return None
         run = self._runs.get(run_id) # 查找对应的 AgentRun
         if run is None or run.pending_operation is None:
-            return None
+            raise RuntimeError("Agent pending operation state is inconsistent")
         pending = run.pending_operation # 查找对应的 PendingOperation
         if pending.operation_id != operation_id:
-            return None
+            raise RuntimeError("Agent pending operation ID is inconsistent")
         # 清除等待关联，恢复对应的 Run
         self._operation_to_run.pop(operation_id)
         run.pending_operation = None
-        if pending.finish_after_result: # 如果外部结果回来后需要直接结束当前 Run, 则直接返回终态
-            return self.complete(run.run_id, observation.outcome)
         return await self._step(run, observation)
 
     def wait_for(
         self,
         run_id: str,
         operation_id: str,
-        *,
-        finish_after_result: bool,
     ) -> None:
         """将 Run 与唯一外部操作关联。"""
 
@@ -117,10 +113,7 @@ class AgentRuntime:
         if operation_id in self._operation_to_run:
             raise RuntimeError(f"Agent operation already exists: {operation_id}")
         # 将 Run 与外部操作关联
-        run.pending_operation = PendingOperation(
-            operation_id=operation_id,
-            finish_after_result=finish_after_result,
-        )
+        run.pending_operation = PendingOperation(operation_id=operation_id,)
         self._operation_to_run[operation_id] = run_id
 
     def complete(self, run_id: str, outcome: str = "completed") -> AgentTransition:

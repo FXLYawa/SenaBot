@@ -16,12 +16,12 @@ flowchart TD
     Step --> Dispatcher["AgentDispatcher"]
     Dispatcher --> Delivery["EffectDelivery"]
     Delivery --> Events["Memory / Context / Body 事件"]
-    Events --> Result["外部结果事件"]
+    Events -->|"需要后续决策"| Result["外部结果事件"]
     Result --> Runtime
-    Runtime --> Terminal["agent.run.completed / failed"]
+    Dispatcher --> Terminal["agent.run.completed / failed"]
 ```
 
-普通对话从 `context.prepared` 开始。`InteractionPolicy` 先判断 Sena 是否应该参与，`InteractionFlow` 再创建 Conversation Run。这个 Behavior 首先请求记忆，拿到结果后组织模型输入并生成回复。ReplyDelivery 随后请求 Context 记录回复、Body 发送回复；Body 报告交付结果后，这次 Run 才真正结束。
+普通对话从 `context.prepared` 开始。`InteractionPolicy` 先判断 Sena 是否应该参与，`InteractionFlow` 再创建 Conversation Run。这个 Behavior 首先请求记忆，拿到结果后组织模型输入并生成回复。ReplyDelivery 请求 Context 记录回复、Body 发送回复，Dispatcher 随后完成这次 Run。
 
 第一次阅读源码时，可以先看 `contracts.py` 和 `runtime.py`，理解 Run 怎样推进；然后看 `dispatcher.py` 与 `deliveries/`，了解 Effect 如何变成事件。最后再从 `interaction_flow.py`、`behaviors/conversation.py` 一路读到 `run_flow.py` 和 `events.py`，完整流程会更容易对应起来。
 
@@ -60,10 +60,9 @@ Agent 的工作是行为决策和执行协调。Context 的保存、Memory 的�
 ```text
 创建 Run
   -> 执行 STARTED step
-  -> 等待外部结果 / 继续结束
-  -> 用 EXTERNAL_RESULT 恢复
-  -> 再次 step 或直接完成
-  -> completed / failed
+  -> 等待型 Effect：登记 operation ID，结果返回后继续 step
+  -> 非等待 Effect + FinishEffect：发布事件并完成 Run
+  -> FailEffect：终止 Run
 ```
 
 Runtime 内部维护两个索引：
@@ -136,7 +135,7 @@ Effect 是 Behavior 表达意图的方式。它只描述“要做什么”，并
 |---|---|---|
 | `MemoryQueryEffect` | 查询当前范围可访问的记忆 | 是 |
 | `MemoryWriteEffect` | 请求写入长期记忆 | 是 |
-| `ReplyEffect` | 记录并交付角色回复 | 是，由 Delivery 生成输出 ID |
+| `ReplyEffect` | 记录并交付角色回复 | 否 |
 | `FinishEffect` | 当前 Run 完成 | 否 |
 | `FailEffect` | 当前 Run 失败 | 否 |
 
@@ -146,9 +145,10 @@ Dispatcher 不会拿到一个 Effect 就立刻执行，而是先检查整个 ste
 2. FinishEffect 最多一个；
 3. 每个外部 Effect 必须存在精确类型匹配的 Delivery；
 4. 一个 step 最多产生一个需要等待的 operation ID；
-5. 没有等待操作时必须有 FinishEffect，否则认为 Run 停滞。
+5. 等待型 Effect 单独占用当前 step；
+6. 没有等待操作时由 FinishEffect 收束当前 Run。
 
-`FinishEffect` 可以和一个需要等待的 Effect 同时出现。这意味着“动作完成后就结束”，Dispatcher 会记录 `finish_after_result=True`。结果回来后 Runtime 直接收尾，不再调用 Behavior；Conversation 的回复交付正是这种情况。
+Memory 查询和写入会影响下一步决策，因此它们登记 operation ID，并在结果回来后再次调用 Behavior。ReplyEffect 只负责发布回复相关事件，与 FinishEffect 出现在同一个 step 中，事件发布后 Run 随即完成。
 
 等待关系必须先登记，再由 Delivery 发布事件。顺序反过来时，如果外部 Handler 很快返回，结果可能早于 operation 索引到达，之后就无法恢复对应的 Run。
 
@@ -170,13 +170,12 @@ class EffectDelivery(Protocol[EffectT]):
         self,
         flow: EventFlow,
         effect: EffectT,
-        operation_id: str | None,
     ) -> None: ...
 ```
 
 Dispatcher 在计划阶段调用 `pending_operation_id()`，所以这个方法不能发布事件或修改状态。返回 `None` 表示动作不需要等待；返回字符串时，Dispatcher 会先用它建立等待关系。
 
-`MemoryDelivery` 直接使用 Effect 自带的 operation ID，把请求转换成 Memory 查询或写入事件。`ReplyDelivery` 则在计划阶段生成输出 ID，随后发布两个事件：
+`MemoryDelivery` 使用 Effect 自带的 operation ID，把请求转换成 Memory 查询或写入事件。`ReplyDelivery` 在发布 Body 请求时生成输出 ID，并同时发布两个事件：
 
 - `context.append.requested`，把 Sena 回复记入对应 Session；
 - `body.output.requested`，把回复交给 Body。
@@ -223,17 +222,16 @@ Memory 查询结果
 
 - `agent.run.requested` 调用 `runtime.start()`；
 - Memory 查询和写入完成事件按关联 ID 调用 `runtime.resume()`；
-- Body 的完成、部分完成和失败事件按输出 ID 恢复 Run；
 - 每个非空 Transition 交给 Dispatcher。
 
-`AgentModule` 集中注册 Agent 拥有的事件，以及 Context、Memory 和 Body 结果事件的 Handler。Runtime、Behavior 和 Delivery 仍由组合根创建，再注入 AgentModule。
+`AgentModule` 集中注册 Agent 拥有的事件，以及 Context 和 Memory 事件的 Handler。Runtime、Behavior 和 Delivery 由组合根创建，再注入 AgentModule。
 
 终态事件有两类：
 
-- `agent.run.completed`：Run 按控制流程结束，`outcome` 保存外部结果；
+- `agent.run.completed`：Run 已经完成本次行为决策和事件发布；
 - `agent.run.failed`：Agent 自身无法继续，携带稳定错误码。
 
-Body 输出失败不应自动变成 `agent.run.failed`：前者是一次外部动作的结果，后者说明 Agent 自己已经无法继续运行。
+Body 的输出结果沿 `body.output.*` 事件继续传播。它描述消息交付状态，与 AgentRun 的行为终态相互独立。
 
 ## 9. 并发和关联 ID
 
@@ -272,7 +270,7 @@ python -m unittest discover -s tests/agent -p "test_*.py" -v
 测试重点放在状态推进和模块边界上：
 
 - Runtime 启动、等待、恢复、终止、异常和 step 上限；
-- Dispatcher 对 Finish、Fail、缺失 Delivery 和多个等待的处理；
+- Dispatcher 对 Finish、Fail、缺失 Delivery、等待冲突和即时完成的处理；
 - Delivery 的字段映射和事件类型；
 - InteractionPolicy 的场景规则；
 - Conversation 的 Memory 请求、结果恢复和回复 Effect；
@@ -296,7 +294,7 @@ python -m unittest discover -s tests/agent -p "test_*.py" -v
 
 - [ ] Runtime 没有具体 Behavior 或业务 Module 分支；
 - [ ] Behavior 只返回 State 和 Effect；
-- [ ] 新 Effect 已安装 Delivery 和结果恢复路径；
+- [ ] 新 Effect 已安装 Delivery，并明确等待或即时完成语义；
 - [ ] 一个 Run 不会同时登记多个等待操作；
 - [ ] 等待关系在请求事件发布前建立；
 - [ ] 终止时 Run 和 operation 索引都被清理；

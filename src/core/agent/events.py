@@ -58,18 +58,6 @@ class AgentModule:
                 self._runs.handle_memory_write_result,
                 "agent.memory_write_completed",
             ),
-            *(
-                (
-                    event_type,
-                    self._runs.handle_output_result,
-                    f"agent.{event_type.replace('.', '_')}",
-                )
-                for event_type in (
-                    "body.output.completed",
-                    "body.output.partially_completed",
-                    "body.output.failed",
-                )
-            ),
         )
 
         for event_type, payload_type in event_definitions:

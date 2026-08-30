@@ -28,6 +28,11 @@ class WaitEffect:
     operation_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class ImmediateEffect:
+    value: str
+
+
 class SequenceBehavior:
     def __init__(self, *results: AgentStepResult) -> None:
         self._results = list(results)
@@ -60,9 +65,21 @@ class RecordingDelivery:
     def emit(
         flow: RecordingFlow,
         effect: WaitEffect,
-        operation_id: str | None,
     ) -> None:
         flow.emit("test.effect.requested", effect)
+
+
+class ImmediateDelivery:
+    @staticmethod
+    def pending_operation_id(effect: ImmediateEffect) -> None:
+        return None
+
+    @staticmethod
+    def emit(
+        flow: RecordingFlow,
+        effect: ImmediateEffect,
+    ) -> None:
+        flow.emit("test.immediate.requested", effect)
 
 
 class RecordingFlow:
@@ -103,35 +120,39 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             [AgentObservationType.STARTED],
         )
 
-    async def test_finish_after_result_completes_without_another_step(self) -> None:
+    async def test_resume_invokes_the_next_behavior_step(self) -> None:
         behavior = SequenceBehavior(
             AgentStepResult(
                 next_state=CounterState(1),
                 effects=(WaitEffect("operation_1"),),
-            )
+            ),
+            AgentStepResult(
+                next_state=CounterState(2),
+                effects=(FinishEffect(),),
+            ),
         )
         runtime = AgentRuntime({"test": behavior})
         transition = await runtime.start(_request())
-        runtime.wait_for(
-            transition.run.run_id,
-            "operation_1",
-            finish_after_result=True,
-        )
+        runtime.wait_for(transition.run.run_id, "operation_1")
 
-        completed = await runtime.resume(
+        resumed = await runtime.resume(
             "operation_1",
             AgentObservation(
                 kind=AgentObservationType.EXTERNAL_RESULT,
                 payload={"ok": True},
-                outcome="completed",
+                resolution_status="completed",
             ),
         )
 
-        self.assertIsNotNone(completed)
-        assert completed is not None
-        self.assertTrue(completed.terminal)
-        self.assertEqual(completed.outcome, "completed")
-        self.assertEqual(len(behavior.observations), 1)
+        self.assertIsNotNone(resumed)
+        assert resumed is not None
+        self.assertFalse(resumed.terminal)
+        self.assertEqual(resumed.run.behavior_state, CounterState(2))
+        self.assertEqual(resumed.run.step_count, 2)
+        self.assertIsNotNone(resumed.step)
+        assert resumed.step is not None
+        self.assertEqual(resumed.step.effects, (FinishEffect(),))
+        self.assertEqual(len(behavior.observations), 2)
         self.assertIsNone(
             await runtime.resume(
                 "operation_1",
@@ -162,7 +183,7 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentDispatcherTests(unittest.IsolatedAsyncioTestCase):
-    async def test_waiting_finish_effect_completes_after_external_result(self) -> None:
+    async def test_waiting_effect_cannot_be_combined_with_finish(self) -> None:
         behavior = SequenceBehavior(
             AgentStepResult(
                 next_state=CounterState(1),
@@ -174,18 +195,31 @@ class AgentDispatcherTests(unittest.IsolatedAsyncioTestCase):
         flow = RecordingFlow()
 
         dispatcher.dispatch(flow, await runtime.start(_request()))
-        completed = await runtime.resume(
-            "operation_1",
-            AgentObservation(
-                kind=AgentObservationType.EXTERNAL_RESULT,
-                outcome="completed",
-            ),
-        )
-        assert completed is not None
-        dispatcher.dispatch(flow, completed)
 
-        self.assertEqual(flow.emitted[0][0], "test.effect.requested")
-        self.assertEqual(flow.emitted[0][1], WaitEffect("operation_1"))
+        self.assertEqual(len(flow.emitted), 1)
+        event_type, failure = flow.emitted[0]
+        self.assertEqual(event_type, "agent.run.failed")
+        self.assertIsInstance(failure, AgentRunFailedEventData)
+        self.assertEqual(failure.code, "step_invalid")
+
+    async def test_non_waiting_effect_with_finish_completes_immediately(self) -> None:
+        effect = ImmediateEffect("reply")
+        behavior = SequenceBehavior(
+            AgentStepResult(
+                next_state=CounterState(1),
+                effects=(effect, FinishEffect()),
+            )
+        )
+        runtime = AgentRuntime({"test": behavior})
+        dispatcher = AgentDispatcher(
+            runtime,
+            {ImmediateEffect: ImmediateDelivery()},
+        )
+        flow = RecordingFlow()
+
+        dispatcher.dispatch(flow, await runtime.start(_request()))
+
+        self.assertEqual(flow.emitted[0], ("test.immediate.requested", effect))
         self.assertEqual(flow.emitted[1][0], "agent.run.completed")
         completion = flow.emitted[1][1]
         self.assertIsInstance(completion, AgentRunCompletedEventData)

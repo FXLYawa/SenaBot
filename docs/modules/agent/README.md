@@ -6,7 +6,7 @@ Agent 是 SenaBot 中决定“接下来做什么”的一层。它接收 Context
 
 生成一条回复并不只是调用一次模型。Agent 可能先查询记忆，再组织提示词、生成回复、记录 Context，最后把内容交给 Body。如果把这些步骤直接串成模块调用，流程越长，各模块之间的依赖就越难拆开。
 
-因此，Agent 用 `AgentRun` 记录一次任务的进度。Behavior 根据当前状态和刚收到的结果决定下一步，并用 Effect 表达要执行的动作。Dispatcher 找到相应的 Delivery，把动作转换成跨模块事件。Memory 或 Body 返回结果后，Agent 再通过关联 ID 找回原来的 Run，继续执行。
+因此，Agent 用 `AgentRun` 记录一次任务的进度。Behavior 根据当前状态和刚收到的结果决定下一步，并用 Effect 表达要执行的动作。Dispatcher 找到相应的 Delivery，把动作转换成跨模块事件。需要参与后续决策的结果会通过关联 ID 找回对应的 Run；回复交给 Context 和 Body 后，本次 Run 就可以结束。
 
 ```mermaid
 flowchart LR
@@ -16,7 +16,7 @@ flowchart LR
     Behavior --> Effect["Effect"]
     Effect --> Delivery["Delivery"]
     Delivery --> External["Memory / Context / Body 事件"]
-    External --> Result["结果事件"]
+    External -->|"需要后续决策"| Result["结果事件"]
     Result --> Run
     Run --> Terminal["agent.run.completed / failed"]
 ```
@@ -33,8 +33,9 @@ Context、Memory 和 Body 仍拥有各自的数据与业务规则。Agent 只依
 - Runtime 只管理 Run，不解释 `behavior_state` 的业务含义；
 - Delivery 只负责把一种 Effect 转换为公开事件；
 - 同一个 Run 当前最多等待一个外部操作；
-- 外部结果使用 `operation_id` 或输出 ID 恢复 Run，不依赖事件完成顺序；
-- `agent.run.completed` 只说明流程已经走到终点，外部操作的实际结果还要看 `outcome`。
+- 需要继续决策的外部操作使用 `operation_id` 恢复 Run；
+- Reply Effect 发布 Context 和 Body 请求后，由同一步的 Finish Effect 结束 Run；
+- `agent.run.completed` 表示 Agent 已完成本次行为，Body 交付状态通过 Body 自己的结果事件观察。
 
 ## 文档导航
 

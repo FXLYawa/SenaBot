@@ -20,7 +20,7 @@ body.input.received
 
 ## 2. 为 Agent 完成外部操作
 
-当 Behavior 产生 Memory 或 Reply Effect 时，Delivery 会把它转换成目标模块的请求事件。目标模块完成工作后，再发布对应的结果事件。Handler 的返回值不会用来恢复 Agent。
+当 Behavior 产生 Memory Effect 时，Delivery 会发布请求事件并为 Run 登记关联 ID。Memory 完成工作后发布结果事件，Agent 再从对应 Run 的状态继续执行。
 
 以 Memory 查询为例：
 
@@ -33,7 +33,7 @@ async def handle_query(flow: EventFlow) -> None:
 
 查询结果要原样带回请求中的关联 ID。Agent 靠它找到正在等待的 Run；如果 ID 不属于当前 Runtime，或者已经使用过，结果会被忽略。
 
-Body 输出也是同样的做法：请求中的输出 ID 要原样出现在完成、部分完成或失败事件里。Reply Effect 会同时请求 Context 记录回复、Body 发送回复，但这两个模块彼此不需要直接调用。
+Reply Effect 的流程更短。Delivery 会同时请求 Context 记录回复、Body 发送回复，随后 Finish Effect 结束本次 Run。Body 使用自己的输出 ID 处理交付，并继续发布完成、部分完成或失败事件，日志和界面等模块可以直接观察这些结果。
 
 ## 3. 观察 Agent 终态
 
@@ -62,7 +62,7 @@ events.subscribe(
 
 观察者只记录结果，不修改 Run。需要区分正常结束和内部错误时，分别订阅 `agent.run.completed` 与 `agent.run.failed`；处理失败类型时读取 `code`，不要解析 `message`。
 
-`agent.run.completed` 的 `outcome` 可能是 `completed`、部分完成或失败。这个事件说明 Agent 已经按流程收尾；只有 `agent.run.failed` 才说明 Behavior、Effect 或 Runtime 本身无法继续。
+`agent.run.completed` 说明 Agent 已经完成本次行为决策和事件发布。Body 是否成功送达消息属于交付结果，可以继续观察 `body.output.completed`、`body.output.partially_completed` 和 `body.output.failed`。
 
 ## 4. 处理未参与的交互
 
@@ -124,10 +124,10 @@ agent.register(ModuleEventAPI(bus, "agent"))
 
 - [ ] 普通对话通过 `context.prepared` 进入 Agent；
 - [ ] 不从其他 Module 直接调用 AgentRuntime；
-- [ ] 外部请求和结果使用同一个关联 ID；
-- [ ] Handler 通过事件发布结果，不返回业务对象；
+- [ ] 需要恢复 Run 的请求和结果使用同一个关联 ID；
+- [ ] Handler 通过事件发布后续事实；
 - [ ] 未知或重复结果不会重新执行 Run；
 - [ ] 正常终态和内部失败分别观察；
 - [ ] 新 Behavior 通过映射安装，不修改 Runtime；
-- [ ] 新 Effect 同时提供对应 Delivery；
+- [ ] 新 Effect 提供对应 Delivery，并明确是否等待结果；
 - [ ] 组合根只负责创建和连接对象。

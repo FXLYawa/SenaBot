@@ -5,7 +5,6 @@ from __future__ import annotations
 from core.agent.contracts import AgentObservation, AgentObservationType
 from core.agent.dispatcher import AgentDispatcher
 from core.agent.runtime import AgentRuntime, AgentTransition
-from core.body import BodyOutputResultEventData
 from core.event import EventFlow
 from core.memory.contracts import (
     MemoryQueryResult,
@@ -47,20 +46,12 @@ class RunFlow:
         result: MemoryWriteResult = flow.payload
         await self._resume(flow, result.operation_id, result, "completed")
 
-    async def handle_output_result(self, flow: EventFlow) -> None:
-        """用 Body 输出交付结果恢复等待中的 Run。
-        处理 body.output.completed 事件
-        """
-
-        result: BodyOutputResultEventData = flow.payload
-        await self._resume(flow, result.output_id, result, result.outcome)
-
     async def _resume(
         self,
         flow: EventFlow,
         operation_id: str,
         payload: object,
-        outcome: str,
+        resolution_status: str,
     ) -> None:
         """恢复等待中的 Run，并分发它的状态迁移。"""
         
@@ -69,7 +60,7 @@ class RunFlow:
             AgentObservation(
                 kind=AgentObservationType.EXTERNAL_RESULT,
                 payload=payload,
-                outcome=outcome,
+                resolution_status=resolution_status,
             ),
         )
         if transition is not None:
@@ -80,4 +71,4 @@ class RunFlow:
         flow: EventFlow,
         transition: AgentTransition,
     ) -> None:
-        await self._dispatcher.dispatch(flow, transition)
+        self._dispatcher.dispatch(flow, transition)

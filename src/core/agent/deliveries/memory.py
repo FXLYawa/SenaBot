@@ -21,15 +21,12 @@ class MemoryDelivery:
     def emit(
         flow: EventFlow,
         effect: MemoryEffect,
-        operation_id: str | None,
     ) -> None:
-        if operation_id is None:
-            raise ValueError("MemoryEffect requires a pending operation ID")
         if isinstance(effect, MemoryQueryEffect):
             flow.emit(
                 "memory.query.requested",
                 MemoryQueryRequest(
-                    query_id=operation_id,
+                    query_id=effect.operation_id,
                     group_id=effect.scene_id or "",
                     session_id=effect.session_id or "",
                     user_id=effect.requester.user_id,
@@ -40,7 +37,7 @@ class MemoryDelivery:
         flow.emit(
             "memory.write.requested",
             MemoryWriteRequest(
-                operation_id=operation_id,
+                operation_id=effect.operation_id,
                 group_id=effect.scene.scene_id,
                 session_id=effect.session_id or "",
                 user_id=effect.requester.user_id,

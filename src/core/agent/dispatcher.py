@@ -27,7 +27,6 @@ class _DeliveryCall:
 
     effect: object # Behavior 产生的原始副作用
     delivery: EffectDelivery[Any] # 负责把它转换成公开事件的适配器
-    operation_id: str | None # 需要等待结果时使用的关联 ID；不等待时为空
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,7 +35,6 @@ class _DispatchPlan:
 
     calls: tuple[_DeliveryCall, ...] # 按声明顺序执行的副作用列表
     pending_operation_id: str | None # 需要等待结果时使用的关联 ID；不等待时为空
-    finish_requested: bool # 表示 Step 中是否包含 `FinishEffect`
 
 
 class AgentDispatcher:
@@ -102,6 +100,7 @@ class AgentDispatcher:
         
         # 4. 对每个外部副作用 Effect, 查找对应的交付适配器, 并生成执行计划
         calls: list[_DeliveryCall] = []
+        pending_operation_ids: list[str] = []
         for effect in external_effects:
             delivery = self._deliveries.get(type(effect))
             if delivery is None:
@@ -109,18 +108,12 @@ class AgentDispatcher:
                     "effect_not_supported",
                     f"No delivery is installed for {type(effect).__name__}.",
                 )
-            calls.append(
-                _DeliveryCall(
-                    effect,
-                    delivery,
-                    delivery.pending_operation_id(effect),
-                )
-            )
+            operation_id = delivery.pending_operation_id(effect)
+            calls.append(_DeliveryCall(effect, delivery))
+            if operation_id is not None:
+                pending_operation_ids.append(operation_id)
 
-        # 5. 检查需要等待的 Effect operation_id, 如果有多个则返回失败, 否则返回执行计划
-        pending_operation_ids = [
-            call.operation_id for call in calls if call.operation_id is not None
-        ]
+        # 5. 校验等待关系, 确保最多只有一个需要等待的外部副作用 Effect
         if len(pending_operation_ids) > 1:
             return FailEffect(
                 "step_invalid",
@@ -131,12 +124,17 @@ class AgentDispatcher:
         )
         # 如果没有需要等待的 operation_id，且没有 Finish Effect
         finish_requested = bool(finishes)
+        if pending_operation_id is not None and finish_requested:
+            return FailEffect(
+                "step_invalid",
+                "A waiting effect cannot be combined with FinishEffect.",
+            )
         if pending_operation_id is None and not finish_requested:
             return FailEffect(
                 "step_stalled",
                 "Behavior neither waited for an operation nor finished the run.",
             )
-        return _DispatchPlan(tuple(calls), pending_operation_id, finish_requested)
+        return _DispatchPlan(tuple(calls), pending_operation_id)
 
     def _execute_plan(
         self,
@@ -148,14 +146,10 @@ class AgentDispatcher:
 
         # 先登记可选等待
         if plan.pending_operation_id is not None:
-            self._runtime.wait_for(
-                run_id,
-                plan.pending_operation_id,
-                finish_after_result=plan.finish_requested,
-            )
+            self._runtime.wait_for(run_id, plan.pending_operation_id,)
         # 按声明顺序发布计划中的所有副作用
         for call in plan.calls:
-            call.delivery.emit(flow, call.effect, call.operation_id)
+            call.delivery.emit(flow, call.effect)
         # 如果没有需要等待的 operation_id，且没有 Finish Effect，则直接完成 Run
         if plan.pending_operation_id is None:
             self._complete(flow, run_id)

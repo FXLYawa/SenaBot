@@ -42,7 +42,7 @@ class MemoryDeliveryTests(unittest.TestCase):
         flow = RecordingFlow()
 
         operation_id = MemoryDelivery.pending_operation_id(effect)
-        MemoryDelivery.emit(flow, effect, operation_id)
+        MemoryDelivery.emit(flow, effect)
 
         self.assertEqual(operation_id, "query_1")
         self.assertEqual(flow.emitted[0][0], "memory.query.requested")
@@ -67,7 +67,7 @@ class MemoryDeliveryTests(unittest.TestCase):
         flow = RecordingFlow()
 
         operation_id = MemoryDelivery.pending_operation_id(effect)
-        MemoryDelivery.emit(flow, effect, operation_id)
+        MemoryDelivery.emit(flow, effect)
 
         self.assertEqual(operation_id, "write_1")
         self.assertEqual(flow.emitted[0][0], "memory.write.requested")
@@ -95,7 +95,9 @@ class ReplyDeliveryTests(unittest.TestCase):
         delivery = ReplyDelivery(character_id="sena", display_name="Sena")
 
         operation_id = delivery.pending_operation_id(effect)
-        delivery.emit(flow, effect, operation_id)
+        delivery.emit(flow, effect)
+
+        self.assertIsNone(operation_id)
 
         self.assertEqual(
             [event_type for event_type, _ in flow.emitted],
@@ -113,7 +115,7 @@ class ReplyDeliveryTests(unittest.TestCase):
 
         output_request = flow.emitted[1][1]
         self.assertIsInstance(output_request, BodyOutputRequestData)
-        self.assertEqual(output_request.output_id, operation_id)
+        self.assertTrue(output_request.output_id.startswith("output_"))
         self.assertEqual(output_request.route, effect.output_route)
         self.assertEqual(output_request.scene, effect.scene)
         self.assertEqual(output_request.reply_to.platform_event_id, "message_1")

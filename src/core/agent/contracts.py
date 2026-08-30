@@ -30,7 +30,7 @@ class AgentObservation:
 
     kind: AgentObservationType  # 标识当前调用的原因
     payload: object | None = None # 外部调用的结果数据，Behavior 自行解析
-    outcome: str = "completed" # 结果的状态
+    resolution_status: str = "completed" # 外部结果的状态（completed, failed, etc.）
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +38,6 @@ class PendingOperation:
     """AgentRun 当前正在等待外部结果的操作"""
 
     operation_id: str  # 用于把外部结果重新关联到原 Run 
-    finish_after_result: bool = False  # 外部结果回来后是否直接结束当前 Run
     # 当前同一个 Run 同时只有一个PendingOperation，后续可能可以考虑添加并行的PendingOperation列表
 
 
@@ -148,7 +147,7 @@ class Behavior(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class AgentRunRequestEventData:
-    """向agent请求创建一个新的agent"""
+    """向agent请求创建一个新的agent run"""
 
     run_id: str # 单次运行的 id
     session_id: str | None
