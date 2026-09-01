@@ -1,37 +1,15 @@
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from .models import (
     MemoryItem,
     MemoryRecallContext,
     MemoryRetrievalCandidate,
-    MemoryScopeKind,
 )
-
-
-def is_scope_accessible(
-    item: MemoryItem,
-    context: MemoryRecallContext,
-) -> bool:
-    """
-    判断记忆的长期归属是否命中当前召回主体。
-
-    GLOBAL 记忆始终可以进入粗候选集；其他记忆只需有一个归属
-    Scope 与当前上下文匹配。这里不判断语义相关性、敏感度或是否
-    适合向当前参与者披露。
-    """
-
-    has_global_scope = any(
-        scope.kind is MemoryScopeKind.GLOBAL
-        for scope in item.scopes
-    )
-    if has_global_scope:
-        return True
-
-    return not item.scopes.isdisjoint(context.scopes)
+from .protocols import MemoryRetrieverProtocol
 
 
 class SimpleMemoryRetriever:
-    """基于内存快照和 Scope 过滤的占位检索器。
+    """基于单个 Memory Space 内存快照和 Scope 过滤的占位检索器。
 
     该实现只用于本地测试和 MVP 编排验证；它接收 query embedding，
     但不计算语义相关性，也不代表正式 Data 层检索能力。
@@ -56,5 +34,31 @@ class SimpleMemoryRetriever:
                 score=0.0,
             )
             for item in self._items
-            if is_scope_accessible(item, context)
+            if context.matches(item)
         ]
+
+
+class SimpleMemorySpaceRouter:
+    """MVP 用的 Memory Space 路由壳。
+
+    真实向量库实现可以把 memory_space_id 映射到 namespace、tenant、
+    partition 或带 tenant 过滤的 collection。这里先映射到一个
+    已经代表单个 Memory Space 的 retriever。
+    """
+
+    def __init__(
+        self,
+        spaces: Mapping[str, MemoryRetrieverProtocol],
+    ) -> None:
+        self._spaces = dict(spaces)
+
+    def for_space(
+        self,
+        memory_space_id: str,
+    ) -> MemoryRetrieverProtocol:
+        try:
+            return self._spaces[memory_space_id]
+        except KeyError as error:
+            raise ValueError(
+                f"memory space not found: {memory_space_id}"
+            ) from error

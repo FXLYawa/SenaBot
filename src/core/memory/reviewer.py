@@ -8,7 +8,6 @@ from .change_plan import (
     MemoryChangePlan,
     NoMemoryChange,
     SupersedeMemoryItem,
-    validate_memory_change_plan,
 )
 from .models import (
     Entity,
@@ -17,7 +16,7 @@ from .models import (
     MemoryPayload,
     MemoryReviewInput,
 )
-from .prompts.review import MEMORY_REVIEW_PROMPT
+from .prompts import MEMORY_REVIEW_PROMPT
 from .protocols import MemoryLLMProtocol
 
 
@@ -36,16 +35,16 @@ class LLMMemoryReviewer:
         response = await self._llm.generate(prompt)
 
         #把plan从字符串转换为Python对象
-        plan = self._parse_response(response, input_data.payload)
+        plan = _MemoryReviewResponseParser(input_data.payload).parse(response)
         #验证
-        validate_memory_change_plan(plan, input_data.related_items)
+        plan.validate_against(input_data.related_items)
 
         return plan
 
     @classmethod
     def _build_prompt(cls, input_data: MemoryReviewInput) -> str:
 
-        """把payload和相关记忆都转为字符串塞进prompt"""
+        """把 payload 和相关记忆都转为字符串塞进prompt"""
         return MEMORY_REVIEW_PROMPT.format(
             payload=json.dumps(
                 cls._payload_data(input_data.payload),
@@ -118,12 +117,13 @@ class LLMMemoryReviewer:
             "entity_id": entity.entity_id,
         }
 
-    @classmethod
-    def _parse_response(
-        cls,
-        response: str,
-        payload: MemoryPayload,
-    ) -> MemoryChangePlan:
+class _MemoryReviewResponseParser:
+    """将 LLM 的 JSON 响应转换为 MemoryChangePlan。"""
+
+    def __init__(self, payload: MemoryPayload) -> None:
+        self._payload = payload
+
+    def parse(self, response: str) -> MemoryChangePlan:
         data = json.loads(response)
 
         if not isinstance(data, dict):
@@ -134,19 +134,17 @@ class LLMMemoryReviewer:
             raise ValueError("memory review operations must be a list")
 
         operations = tuple(
-            cls._parse_operation(operation_data, payload)
+            self._parse_operation(operation_data)
             for operation_data in operations_data
         )
         plan = MemoryChangePlan(operations=operations)
-        cls._validate_payload_operations(plan, payload)
+        self._validate_operations_for_payload(plan)
 
         return plan
 
-    @classmethod
     def _parse_operation(
-        cls,
+        self,
         data: Any,
-        payload: MemoryPayload,
     ) -> MemoryChangeOperation:
         if not isinstance(data, dict):
             raise ValueError(
@@ -174,66 +172,48 @@ class LLMMemoryReviewer:
             )
 
         if operation_type == "add":
-            return AddMemoryItem(payload=payload)
+            return AddMemoryItem(payload=self._payload)
 
         if operation_type == "end_fact_validity":
-            if not isinstance(payload, Fact):
+            if not isinstance(self._payload, Fact):
                 raise ValueError(
                     "end_fact_validity requires a Fact payload"
                 )
 
             return EndFactValidity(
-                target_item_id=cls._require_text(
+                target_item_id=self._require_text(
                     data.get("target_item_id"),
                     "target_item_id",
                 ),
-                valid_to=payload.valid_from or payload.recorded_at,
+                valid_to=self._payload.valid_from or self._payload.recorded_at,
             )
 
         if operation_type == "supersede":
             return SupersedeMemoryItem(
-                target_item_id=cls._require_text(
+                target_item_id=self._require_text(
                     data.get("target_item_id"),
                     "target_item_id",
                 ),
-                replacement=payload,
+                replacement=self._payload,
             )
 
         reason = data.get("reason")
         if reason is not None:
-            reason = cls._require_text(reason, "reason")
+            reason = self._require_text(reason, "reason")
 
         return NoMemoryChange(reason=reason)
 
-    @staticmethod
-    def _validate_payload_operations(
+    def _validate_operations_for_payload(
+        self,
         plan: MemoryChangePlan,
-        payload: MemoryPayload,
     ) -> None:
-        add_count = sum(
-            isinstance(operation, AddMemoryItem)
-            for operation in plan.operations
-        )
-        supersede_count = sum(
-            isinstance(operation, SupersedeMemoryItem)
-            for operation in plan.operations
-        )
-
-        if add_count > 1:
-            raise ValueError("memory review plan must not add payload twice")
-
-        if supersede_count > 1:
-            raise ValueError(
-                "memory review plan must not supersede with payload twice"
-            )
-
-        if isinstance(payload, Fact):
+        if isinstance(self._payload, Fact):
             allowed_types = (
                 AddMemoryItem,
                 EndFactValidity,
                 NoMemoryChange,
             )
-        elif isinstance(payload, Experience):
+        elif isinstance(self._payload, Experience):
             allowed_types = (AddMemoryItem, NoMemoryChange)
         else:
             allowed_types = (
@@ -248,11 +228,6 @@ class LLMMemoryReviewer:
         ):
             raise ValueError(
                 "memory review operation is not allowed for payload domain"
-            )
-
-        if supersede_count and add_count:
-            raise ValueError(
-                "memory review plan must not combine supersede and add"
             )
 
     @staticmethod

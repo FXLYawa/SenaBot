@@ -69,6 +69,16 @@ class MemoryRetrieverProtocol(Protocol):
         ...
 
 
+class MemorySpaceRouterProtocol(Protocol):
+    """根据 Memory Space 标识选择对应的记忆检索空间。"""
+
+    def for_space(
+        self,
+        memory_space_id: str,
+    ) -> MemoryRetrieverProtocol:
+        ...
+
+
 class MemoryRerankerProtocol(Protocol):
     """根据查询文本对候选记忆重新排序。"""
 

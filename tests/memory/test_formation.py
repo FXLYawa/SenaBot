@@ -80,6 +80,25 @@ class RecordingRetriever:
         return self.candidates
 
 
+class RecordingMemorySpaceRouter:
+    def __init__(
+        self,
+        calls: list[str],
+        retriever: RecordingRetriever,
+    ) -> None:
+        self.calls = calls
+        self.retriever = retriever
+        self.memory_space_id: str | None = None
+
+    def for_space(
+        self,
+        memory_space_id: str,
+    ) -> RecordingRetriever:
+        self.calls.append("for_space")
+        self.memory_space_id = memory_space_id
+        return self.retriever
+
+
 class RecordingMaterializer:
     def __init__(self, calls: list[str], payload: Fact) -> None:
         self.calls = calls
@@ -150,14 +169,17 @@ async def test_formation_runs_complete_pipeline_with_shared_snapshot():
 
     embedder = RecordingEmbedder(calls)
     retriever = RecordingRetriever(calls, retrieval_candidates)
+    memory_spaces = RecordingMemorySpaceRouter(calls, retriever)
     materializer = RecordingMaterializer(calls, payload)
     reviewer = RecordingReviewer(calls, plan)
     executor = RecordingExecutor(calls, execution)
-    recall_context = MemoryRecallContext(scopes=SCOPES)
+    recall_context = MemoryRecallContext(
+        scopes=SCOPES,
+    )
     service = MemoryService(
         extractor=object(),
         embedder=embedder,
-        retriever=retriever,
+        memory_spaces=memory_spaces,
         reranker=object(),
         materializer=materializer,
         reviewer=reviewer,
@@ -177,12 +199,14 @@ async def test_formation_runs_complete_pipeline_with_shared_snapshot():
 
     assert calls == [
         "embed",
+        "for_space",
         "retrieve",
         "materialize",
         "review",
         "execute",
     ]
     assert embedder.query == candidate.content
+    assert memory_spaces.memory_space_id == "space-001"
     assert retriever.embedding == [0.25, 0.75]
     assert retriever.context is recall_context
 
@@ -217,7 +241,10 @@ async def test_formation_supports_no_related_items():
     service = MemoryService(
         extractor=object(),
         embedder=RecordingEmbedder(calls),
-        retriever=RecordingRetriever(calls, []),
+        memory_spaces=RecordingMemorySpaceRouter(
+            calls,
+            RecordingRetriever(calls, []),
+        ),
         reranker=object(),
         materializer=materializer,
         reviewer=reviewer,
@@ -228,7 +255,9 @@ async def test_formation_supports_no_related_items():
         MemoryFormationInput(
             candidate=create_candidate("用户喜欢跑步"),
             recorded_at=RECORDED_AT,
-            recall_context=MemoryRecallContext(scopes=SCOPES),
+            recall_context=MemoryRecallContext(
+                scopes=SCOPES,
+            ),
             memory_space_id="space-001",
             scopes=SCOPES,
             operation_id="operation-001",
@@ -260,7 +289,9 @@ def test_formation_input_rejects_invalid_context(
     values = {
         "candidate": create_candidate("用户喜欢跑步"),
         "recorded_at": RECORDED_AT,
-        "recall_context": MemoryRecallContext(scopes=SCOPES),
+        "recall_context": MemoryRecallContext(
+            scopes=SCOPES,
+        ),
         "memory_space_id": "space-001",
         "scopes": SCOPES,
         "operation_id": "operation-001",

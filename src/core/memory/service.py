@@ -24,9 +24,34 @@ from .protocols import (
     MemoryExtractorProtocol,
     MemoryMaterializerProtocol,
     MemoryRerankerProtocol,
-    MemoryRetrieverProtocol,
     MemoryReviewerProtocol,
+    MemorySpaceRouterProtocol,
 )
+
+
+def _build_query_recall_context(
+    request: MemoryQueryRequest,
+) -> MemoryRecallContext:
+    """根据查询请求构造当前可召回的 Scope 边界。"""
+
+    return MemoryRecallContext(
+        scopes=frozenset(
+            {
+                MemoryScopeRef(
+                    kind=MemoryScopeKind.USER,
+                    scope_id=request.user_id,
+                ),
+                MemoryScopeRef(
+                    kind=MemoryScopeKind.SESSION,
+                    scope_id=request.session_id,
+                ),
+                MemoryScopeRef(
+                    kind=MemoryScopeKind.GROUP,
+                    scope_id=request.group_id,
+                ),
+            }
+        )
+    )
 
 
 class MemoryService:
@@ -36,7 +61,7 @@ class MemoryService:
         self,
         extractor: MemoryExtractorProtocol,
         embedder: MemoryEmbeddingProtocol,
-        retriever: MemoryRetrieverProtocol ,
+        memory_spaces: MemorySpaceRouterProtocol,
         reranker: MemoryRerankerProtocol ,
         materializer: MemoryMaterializerProtocol ,
         reviewer: MemoryReviewerProtocol ,
@@ -44,7 +69,7 @@ class MemoryService:
     ) -> None:
         self.extractor = extractor
         self.embedder = embedder
-        self.retriever = retriever
+        self.memory_spaces = memory_spaces
         self.reranker = reranker
         self.materializer = materializer
         self.reviewer = reviewer
@@ -61,27 +86,13 @@ class MemoryService:
         query_embedding = await self.embedder.embed(request.query_text)
 
         #得到允许召回的边界
-        query_context = MemoryRecallContext(
-            scopes=frozenset(
-                {
-                    MemoryScopeRef(
-                        kind=MemoryScopeKind.USER,
-                        scope_id=request.user_id,
-                    ),
-                    MemoryScopeRef(
-                        kind=MemoryScopeKind.SESSION,
-                        scope_id=request.session_id,
-                    ),
-                    MemoryScopeRef(
-                        kind=MemoryScopeKind.GROUP,
-                        scope_id=request.group_id,
-                    ),
-                }
-            )
-        )
+        query_context = _build_query_recall_context(request)
 
-        #数据库检索,得到候选的记忆
-        candidates = await self.retriever.retrieve(
+        #根据 Memory Space 路由到对应的记忆空间后检索。
+        retriever = self.memory_spaces.for_space(
+            request.memory_space_id
+        )
+        candidates = await retriever.retrieve(
             query_embedding,
             context=query_context,
         )
@@ -97,6 +108,7 @@ class MemoryService:
         #返回最终查询结果
         return MemoryQueryResult(
             query_id=request.query_id,
+            memory_space_id=request.memory_space_id,
             user_id=request.user_id,
             session_id=request.session_id,
             group_id=request.group_id,
@@ -120,8 +132,11 @@ class MemoryService:
             input_data.candidate.content
         )
 
-        #检索相关的记忆
-        retrieval_candidates = await self.retriever.retrieve(
+        #根据 Memory Space 路由到对应的记忆空间后检索相关记忆。
+        retriever = self.memory_spaces.for_space(
+            input_data.memory_space_id
+        )
+        retrieval_candidates = await retriever.retrieve(
             query_embedding,
             context=input_data.recall_context,
         )

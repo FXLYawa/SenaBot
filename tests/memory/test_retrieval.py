@@ -16,7 +16,7 @@ from core.memory.models import (
 from core.memory.reranker import SimpleMemoryReranker
 from core.memory.retriever import (
     SimpleMemoryRetriever,
-    is_scope_accessible,
+    SimpleMemorySpaceRouter,
 )
 from core.memory.service import MemoryService
 
@@ -99,6 +99,23 @@ class RecordingRetriever:
         return self.candidates
 
 
+class RecordingMemorySpaceRouter:
+    def __init__(
+        self,
+        calls: list[object],
+        retriever: RecordingRetriever,
+    ) -> None:
+        self.calls = calls
+        self.retriever = retriever
+
+    def for_space(
+        self,
+        memory_space_id: str,
+    ) -> RecordingRetriever:
+        self.calls.append(("for_space", memory_space_id))
+        return self.retriever
+
+
 class RecordingReranker:
     def __init__(self, calls: list[object]) -> None:
         self.calls = calls
@@ -117,7 +134,7 @@ class RecordingReranker:
     [
         "extractor",
         "embedder",
-        "retriever",
+        "memory_spaces",
         "reranker",
         "materializer",
         "reviewer",
@@ -130,7 +147,7 @@ def test_service_requires_every_dependency_at_construction(
     dependencies = {
         "extractor": object(),
         "embedder": object(),
-        "retriever": object(),
+        "memory_spaces": object(),
         "reranker": object(),
         "materializer": object(),
         "reviewer": object(),
@@ -154,7 +171,10 @@ async def test_query_runs_complete_retrieval_pipeline():
     service = MemoryService(
         extractor=object(),
         embedder=RecordingEmbedder(calls),
-        retriever=RecordingRetriever(calls, candidates),
+        memory_spaces=RecordingMemorySpaceRouter(
+            calls,
+            RecordingRetriever(calls, candidates),
+        ),
         reranker=RecordingReranker(calls),
         materializer=object(),
         reviewer=object(),
@@ -164,6 +184,7 @@ async def test_query_runs_complete_retrieval_pipeline():
     result = await service.query(
         MemoryQueryRequest(
             query_id="query-001",
+            memory_space_id="space-001",
             user_id="user-001",
             session_id="session-001",
             group_id="group-001",
@@ -173,6 +194,7 @@ async def test_query_runs_complete_retrieval_pipeline():
 
     assert calls == [
         ("embed", "用户喜欢什么运动"),
+        ("for_space", "space-001"),
         (
             "retrieve",
             [1.0, 2.0],
@@ -210,7 +232,10 @@ async def test_query_returns_empty_result_when_retriever_has_no_candidates():
     service = MemoryService(
         extractor=object(),
         embedder=RecordingEmbedder(calls),
-        retriever=RecordingRetriever(calls, []),
+        memory_spaces=RecordingMemorySpaceRouter(
+            calls,
+            RecordingRetriever(calls, []),
+        ),
         reranker=RecordingReranker(calls),
         materializer=object(),
         reviewer=object(),
@@ -220,6 +245,7 @@ async def test_query_returns_empty_result_when_retriever_has_no_candidates():
     result = await service.query(
         MemoryQueryRequest(
             query_id="query-empty",
+            memory_space_id="space-001",
             user_id="user-001",
             session_id="session-001",
             group_id="group-001",
@@ -308,7 +334,7 @@ async def test_simple_reranker_sorts_candidates_by_score_descending():
     assert candidates == [low_score, high_score]
 
 
-def test_scope_filter_matches_same_user_scope():
+def test_recall_context_matches_same_user_scope():
     user_scope = MemoryScopeRef(
         MemoryScopeKind.USER,
         "user-001",
@@ -318,13 +344,14 @@ def test_scope_filter_matches_same_user_scope():
         frozenset({user_scope}),
     )
 
-    assert is_scope_accessible(
-        item,
-        MemoryRecallContext(frozenset({user_scope})),
+    context = MemoryRecallContext(
+        scopes=frozenset({user_scope}),
     )
 
+    assert context.matches(item)
 
-def test_scope_filter_rejects_different_user_scope():
+
+def test_recall_context_rejects_different_user_scope():
     item = create_memory_item(
         "item-001",
         frozenset(
@@ -337,7 +364,7 @@ def test_scope_filter_rejects_different_user_scope():
         ),
     )
     context = MemoryRecallContext(
-        frozenset(
+        scopes=frozenset(
             {
                 MemoryScopeRef(
                     MemoryScopeKind.USER,
@@ -347,10 +374,10 @@ def test_scope_filter_rejects_different_user_scope():
         )
     )
 
-    assert not is_scope_accessible(item, context)
+    assert not context.matches(item)
 
 
-def test_scope_filter_matches_any_item_ownership_scope():
+def test_recall_context_matches_any_item_ownership_scope():
     user_scope = MemoryScopeRef(
         MemoryScopeKind.USER,
         "user-001",
@@ -368,10 +395,9 @@ def test_scope_filter_matches_any_item_ownership_scope():
         frozenset({user_scope, group_scope}),
     )
 
-    assert is_scope_accessible(
-        item,
+    assert (
         MemoryRecallContext(
-            frozenset(
+            scopes=frozenset(
                 {
                     user_scope,
                     MemoryScopeRef(
@@ -380,23 +406,21 @@ def test_scope_filter_matches_any_item_ownership_scope():
                     ),
                 }
             )
-        ),
+        ).matches(item)
     )
-    assert is_scope_accessible(
-        item,
+    assert (
         MemoryRecallContext(
-            frozenset({user_scope, group_scope})
-        ),
+            scopes=frozenset({user_scope, group_scope}),
+        ).matches(item)
     )
-    assert is_scope_accessible(
-        item,
+    assert (
         MemoryRecallContext(
-            frozenset({user_scope, group_scope, session_scope})
-        ),
+            scopes=frozenset({user_scope, group_scope, session_scope}),
+        ).matches(item)
     )
 
 
-def test_scope_filter_rejects_context_without_matching_owner():
+def test_recall_context_rejects_context_without_matching_owner():
     item = create_memory_item(
         "item-001",
         frozenset(
@@ -407,7 +431,7 @@ def test_scope_filter_rejects_context_without_matching_owner():
         ),
     )
     context = MemoryRecallContext(
-        frozenset(
+        scopes=frozenset(
             {
                 MemoryScopeRef(MemoryScopeKind.USER, "user-002"),
                 MemoryScopeRef(MemoryScopeKind.GROUP, "group-002"),
@@ -415,10 +439,10 @@ def test_scope_filter_rejects_context_without_matching_owner():
         )
     )
 
-    assert not is_scope_accessible(item, context)
+    assert not context.matches(item)
 
 
-def test_global_item_is_visible_in_empty_context():
+def test_recall_context_allows_global_item_in_empty_context():
     item = create_memory_item(
         "item-global",
         frozenset(
@@ -431,10 +455,11 @@ def test_global_item_is_visible_in_empty_context():
         ),
     )
 
-    assert is_scope_accessible(
-        item,
-        MemoryRecallContext(frozenset()),
+    context = MemoryRecallContext(
+        scopes=frozenset(),
     )
+
+    assert context.matches(item)
 
 
 def test_global_query_scope_does_not_grant_user_scope_access():
@@ -450,7 +475,7 @@ def test_global_query_scope_does_not_grant_user_scope_access():
         ),
     )
     context = MemoryRecallContext(
-        frozenset(
+        scopes=frozenset(
             {
                 MemoryScopeRef(
                     MemoryScopeKind.GLOBAL,
@@ -460,10 +485,10 @@ def test_global_query_scope_does_not_grant_user_scope_access():
         )
     )
 
-    assert not is_scope_accessible(item, context)
+    assert not context.matches(item)
 
 
-def test_memory_space_does_not_affect_scope_access():
+def test_memory_space_does_not_affect_recall_context_match():
     user_scope = MemoryScopeRef(
         MemoryScopeKind.USER,
         "user-001",
@@ -478,7 +503,45 @@ def test_memory_space_does_not_affect_scope_access():
         frozenset({user_scope}),
         memory_space_id="space-002",
     )
-    context = MemoryRecallContext(frozenset({user_scope}))
+    context = MemoryRecallContext(
+        scopes=frozenset({user_scope}),
+    )
 
-    assert is_scope_accessible(first_item, context)
-    assert is_scope_accessible(second_item, context)
+    assert context.matches(first_item)
+    assert context.matches(second_item)
+
+
+@pytest.mark.asyncio
+async def test_memory_space_router_selects_one_memory_space():
+    user_scope = MemoryScopeRef(
+        MemoryScopeKind.USER,
+        "user-001",
+    )
+    accessible_item = create_memory_item(
+        "item-001",
+        frozenset({user_scope}),
+        memory_space_id="space-001",
+    )
+    other_space_item = create_memory_item(
+        "item-002",
+        frozenset({user_scope}),
+        memory_space_id="space-002",
+    )
+    router = SimpleMemorySpaceRouter(
+        {
+            "space-001": SimpleMemoryRetriever([accessible_item]),
+            "space-002": SimpleMemoryRetriever([other_space_item]),
+        }
+    )
+    retriever = router.for_space("space-001")
+
+    candidates = await retriever.retrieve(
+        [1.0],
+        context=MemoryRecallContext(
+            scopes=frozenset({user_scope}),
+        ),
+    )
+
+    assert candidates == [
+        MemoryRetrievalCandidate(accessible_item, score=0.0)
+    ]

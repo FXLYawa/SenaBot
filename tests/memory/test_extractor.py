@@ -231,7 +231,7 @@ async def test_service_builds_context_and_delegates_to_extractor() -> None:
     service = MemoryService(
         extractor=extractor,
         embedder=unused_dependency,
-        retriever=unused_dependency,
+        memory_spaces=unused_dependency,
         reranker=unused_dependency,
         materializer=unused_dependency,
         reviewer=unused_dependency,
@@ -276,7 +276,7 @@ async def test_service_requires_configured_extractor() -> None:
     service = MemoryService(
         extractor=None,
         embedder=unused_dependency,
-        retriever=unused_dependency,
+        memory_spaces=unused_dependency,
         reranker=unused_dependency,
         materializer=unused_dependency,
         reviewer=unused_dependency,

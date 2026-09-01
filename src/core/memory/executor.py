@@ -8,7 +8,6 @@ from .change_plan import (
     MemoryChangePlan,
     NoMemoryChange,
     SupersedeMemoryItem,
-    validate_memory_change_plan,
 )
 from .models import (
     MemoryItem,
@@ -28,7 +27,7 @@ def _new_item_id() -> str:
 @dataclass(frozen=True)
 class MemoryChangeExecutionInput:
     """将变更计划转换为正式写入命令所需的上下文。"""
-
+    # Reviewer 已确认的 Memory 变更计划，Executor 按其中操作落地。
     plan: MemoryChangePlan
     related_items: tuple[MemoryItem, ...]
     memory_space_id: str
@@ -58,7 +57,7 @@ class MemoryChangeExecutionInput:
 
 @dataclass(frozen=True)
 class MemoryChangeExecutionResult:
-    """变更计划经 Repository 端口执行后的领域结果。"""
+    """变更计划经 Repository 端口执行后的得到的新增与更新记忆集合。"""
 
     added_items: tuple[MemoryItem, ...] = ()
     updated_items: tuple[MemoryItem, ...] = ()
@@ -81,10 +80,7 @@ class MemoryChangeExecutor:
     ) -> MemoryChangeExecutionResult:
         """主逻辑,负责将执行最终入库操作"""
 
-        validate_memory_change_plan(
-            input_data.plan,
-            input_data.related_items,
-        )
+        input_data.plan.validate_against(input_data.related_items)
 
         added_items: list[MemoryItem] = []
         updated_items: list[MemoryItem] = []

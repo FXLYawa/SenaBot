@@ -13,7 +13,7 @@ from .models import (
     MemoryPayload,
     Understanding,
 )
-from .prompts.materialization import MEMORY_MATERIALIZATION_PROMPT
+from .prompts import MEMORY_MATERIALIZATION_PROMPT
 from .protocols import MemoryLLMProtocol
 
 
@@ -29,78 +29,37 @@ class LLMMemoryMaterializer:
     ) -> MemoryPayload:
         """调用 LLM 判断领域，并构造受领域模型约束的 Payload。"""
 
-        prompt = self._build_prompt(input_data)
+        prompt = _build_prompt(input_data)
         response = await self._llm.generate(prompt)
 
         #把JSON字符串转换成Payload
         return self._parse_response(response, input_data)
 
     @classmethod
-    def _build_prompt(
-        cls,
-        input_data: MemoryMaterializationInput,
-    ) -> str:
-
-        """构造给LLM的上下文,包括候选记忆,记录时间和相关记忆"""
-        return MEMORY_MATERIALIZATION_PROMPT.format(
-            candidate=input_data.candidate.content,
-            recorded_at=input_data.recorded_at.isoformat(),
-            related_items=cls._format_related_items(
-                input_data.related_items
-            ),
-        )
-
-    @classmethod
-    def _format_related_items(
-        cls,
-        items: tuple[MemoryItem, ...],
-    ) -> str:
-
-        """把related_items转换为给LLM阅读的字符串"""
-        if not items:
-            return "无"
-
-        return "\n".join(
-            f"- item_id: {item.item_id}\n"
-            f"  domain: {item.domain.value}\n"
-            f"  content: {cls._payload_text(item.payload)}"
-            for item in items
-        )
-
-    @staticmethod
-    def _payload_text(payload: MemoryPayload) -> str:
-
-        """payload内容适配,Experience的内容是summary,其他是content"""
-        if isinstance(payload, Experience):
-            return payload.summary
-
-        return payload.content
-
-    @classmethod
     def _parse_response(
-        cls,
-        response: str,
-        input_data: MemoryMaterializationInput,
+            cls,
+            response: str,
+            input_data: MemoryMaterializationInput,
     ) -> MemoryPayload:
+        """
+        解析 LLM 返回的 Materialization 结果。
+
+        这里只负责校验通用响应结构并根据 domain 分发，
+        具体 Payload 的字段解析和对象构造交给对应的私有函数。
+        """
         data = json.loads(response)
 
-        #类型检查
         if not isinstance(data, dict):
             raise ValueError(
                 "memory materialization response must be a JSON object"
             )
 
-        #提取Payload类型标识
         domain_value = data.get("domain")
-
-        #类型检查
         if not isinstance(domain_value, str):
             raise ValueError(
                 "memory materialization domain must be a string"
             )
 
-
-        #将字符串真正转换为已定义的四个枚举类之一
         try:
             domain = MemoryDomain(domain_value)
         except ValueError as error:
@@ -108,78 +67,22 @@ class LLMMemoryMaterializer:
                 "invalid memory materialization domain"
             ) from error
 
-        #得到内容
         payload_data = data.get("payload")
         if not isinstance(payload_data, dict):
             raise ValueError(
                 "memory materialization payload must be a JSON object"
             )
 
-        #Fact的处理
         if domain is MemoryDomain.FACT:
-            return Fact(
-                content=cls._require_text(
-                    payload_data.get("content"),
-                    "fact content",
-                ),
-                provenance=input_data.candidate.provenance,
-                recorded_at=input_data.recorded_at,
-                valid_from=cls._parse_optional_datetime(
-                    payload_data.get("valid_from"),
-                    "fact valid_from",
-                ),
-                valid_to=cls._parse_optional_datetime(
-                    payload_data.get("valid_to"),
-                    "fact valid_to",
-                ),
-            )
+            return cls._parse_fact(payload_data, input_data)
 
-        #Experience的处理
         if domain is MemoryDomain.EXPERIENCE:
-            return Experience(
-                summary=cls._require_text(
-                    payload_data.get("summary"),
-                    "experience summary",
-                ),
-                provenance=input_data.candidate.provenance,
-                participants=cls._parse_participants(
-                    payload_data.get("participants")
-                ),
-                occurred_from=cls._parse_optional_datetime(
-                    payload_data.get("occurred_from"),
-                    "experience occurred_from",
-                ),
-                occurred_to=cls._parse_optional_datetime(
-                    payload_data.get("occurred_to"),
-                    "experience occurred_to",
-                ),
-                recorded_at=input_data.recorded_at,
-            )
+            return cls._parse_experience(payload_data, input_data)
 
-        #Understanding的处理
         if domain is MemoryDomain.UNDERSTANDING:
-            return Understanding(
-                content=cls._require_text(
-                    payload_data.get("content"),
-                    "understanding content",
-                ),
-                provenance=input_data.candidate.provenance,
-                evidence_item_ids=cls._parse_evidence_item_ids(
-                    payload_data.get("evidence_item_ids"),
-                    input_data.related_items,
-                ),
-                recorded_at=input_data.recorded_at,
-            )
+            return cls._parse_understanding(payload_data, input_data)
 
-        #剩下的就是Knowledge
-        return Knowledge(
-            content=cls._require_text(
-                payload_data.get("content"),
-                "knowledge content",
-            ),
-            provenance=input_data.candidate.provenance,
-            recorded_at=input_data.recorded_at,
-        )
+        return cls._parse_knowledge(payload_data, input_data)
 
     @staticmethod
     def _require_text(value: Any, field_name: str) -> str:
@@ -275,3 +178,132 @@ class LLMMemoryMaterializer:
             raise ValueError(
                 f"{field_name} must be an ISO 8601 string or null"
             ) from error
+
+
+    @classmethod
+    def _parse_fact(
+            cls,
+            payload_data: dict[str, Any],
+            input_data: MemoryMaterializationInput,
+    ) -> Fact:
+        """将 LLM 返回的 Fact 字段解析为正式 Fact Payload。"""
+        return Fact(
+            content=cls._require_text(
+                payload_data.get("content"),
+                "fact content",
+            ),
+            provenance=input_data.candidate.provenance,
+            recorded_at=input_data.recorded_at,
+            valid_from=cls._parse_optional_datetime(
+                payload_data.get("valid_from"),
+                "fact valid_from",
+            ),
+            valid_to=cls._parse_optional_datetime(
+                payload_data.get("valid_to"),
+                "fact valid_to",
+            ),
+        )
+
+    @classmethod
+    def _parse_experience(
+            cls,
+            payload_data: dict[str, Any],
+            input_data: MemoryMaterializationInput,
+    ) -> Experience:
+        """将 LLM 返回的 Experience 字段解析为正式 Experience Payload。"""
+        return Experience(
+            summary=cls._require_text(
+                payload_data.get("summary"),
+                "experience summary",
+            ),
+            provenance=input_data.candidate.provenance,
+            participants=cls._parse_participants(
+                payload_data.get("participants")
+            ),
+            occurred_from=cls._parse_optional_datetime(
+                payload_data.get("occurred_from"),
+                "experience occurred_from",
+            ),
+            occurred_to=cls._parse_optional_datetime(
+                payload_data.get("occurred_to"),
+                "experience occurred_to",
+            ),
+            recorded_at=input_data.recorded_at,
+        )
+
+    @classmethod
+    def _parse_understanding(
+            cls,
+            payload_data: dict[str, Any],
+            input_data: MemoryMaterializationInput,
+    ) -> Understanding:
+        """
+        将 LLM 返回的 Understanding 字段解析为正式 Understanding Payload。
+
+        evidence_item_ids 必须引用本次 Materialization 可见的相关记忆，
+        具体合法性检查由 _parse_evidence_item_ids 负责。
+        """
+        return Understanding(
+            content=cls._require_text(
+                payload_data.get("content"),
+                "understanding content",
+            ),
+            provenance=input_data.candidate.provenance,
+            evidence_item_ids=cls._parse_evidence_item_ids(
+                payload_data.get("evidence_item_ids"),
+                input_data.related_items,
+            ),
+            recorded_at=input_data.recorded_at,
+        )
+
+    @classmethod
+    def _parse_knowledge(
+            cls,
+            payload_data: dict[str, Any],
+            input_data: MemoryMaterializationInput,
+    ) -> Knowledge:
+        """将 LLM 返回的 Knowledge 字段解析为正式 Knowledge Payload。"""
+        return Knowledge(
+            content=cls._require_text(
+                payload_data.get("content"),
+                "knowledge content",
+            ),
+            provenance=input_data.candidate.provenance,
+            recorded_at=input_data.recorded_at,
+        )
+
+def _build_prompt(
+        input_data: MemoryMaterializationInput,
+    ) -> str:
+
+        """构造给LLM的上下文,包括候选记忆,记录时间和相关记忆"""
+        return MEMORY_MATERIALIZATION_PROMPT.format(
+            candidate=input_data.candidate.content,
+            recorded_at=input_data.recorded_at.isoformat(),
+            related_items=_format_related_items(
+                input_data.related_items
+            ),
+        )
+
+def _format_related_items(
+        items: tuple[MemoryItem, ...],
+    ) -> str:
+
+        """把related_items转换为给LLM阅读的字符串"""
+        if not items:
+            return "无"
+
+        return "\n".join(
+            f"- item_id: {item.item_id}\n"
+            f"  domain: {item.domain.value}\n"
+            f"  content: {_payload_text(item.payload)}"
+            for item in items
+        )
+
+def _payload_text(payload: MemoryPayload) -> str:
+
+    """payload内容适配,Experience的内容是summary,其他是content"""
+    if isinstance(payload, Experience):
+        return payload.summary
+
+    return payload.content

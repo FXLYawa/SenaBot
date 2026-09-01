@@ -247,16 +247,13 @@ def test_supersede_requires_same_domain():
 
 
 def test_change_plan_rejects_duplicate_target_operations():
-    target = create_item("fact-001", create_fact())
-    plan = MemoryChangePlan(
-        operations=(
-            EndFactValidity("fact-001", RECORDED_AT),
-            EndFactValidity(
-                "fact-001",
-                RECORDED_AT + timedelta(seconds=1),
-            ),
-        )
-    )
-
     with pytest.raises(ValueError, match="same target more than once"):
-        validate_memory_change_plan(plan, (target,))
+        MemoryChangePlan(
+            operations=(
+                EndFactValidity("fact-001", RECORDED_AT),
+                EndFactValidity(
+                    "fact-001",
+                    RECORDED_AT + timedelta(seconds=1),
+                ),
+            )
+        )

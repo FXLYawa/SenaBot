@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import ClassVar, TypeAlias
 
 
@@ -36,6 +36,8 @@ def _validate_time_range(
 
 @dataclass(frozen=True)
 class Entity:
+    """表示一段记忆中涉及的主体，例如用户、Bot 或其他参与者."""
+
     entity_type: str
     entity_id: str
 
@@ -51,7 +53,7 @@ class Provenance:
         _require_non_blank(self.source_id, "source_id")
 
 
-class MemoryScopeKind(str, Enum):
+class MemoryScopeKind(StrEnum):
     GLOBAL = "global"
     USER = "user"
     GROUP = "group"
@@ -65,6 +67,8 @@ class MemoryScopeRef:
 
     Scope 表示记忆属于哪个长期主体空间，不是未来使用场景的
     白名单，也不决定 Agent 是否在当前场景披露或发布该信息。
+
+    持久化检索与召回粗筛的重要过滤依据之一
     """
     kind: MemoryScopeKind
     scope_id: str | None
@@ -82,7 +86,7 @@ class MemoryScopeRef:
             )
 
 
-class MemoryDomain(str, Enum):
+class MemoryDomain(StrEnum):
     """具体业务上的 Memory 类型。"""
 
     FACT = "fact"
@@ -188,13 +192,22 @@ MemoryPayload: TypeAlias = Fact | Experience | Understanding | Knowledge
 @dataclass
 class MemoryItem:
     """
-    Memory总字段,用于和外界模块交互
-    payload负责封装具体的业务结构
-    公共字段放置外界模块需要频繁获得的字段
+    Memory 层对外流转的正式记忆对象。
+
+    payload 封装具体业务内容，
+    其余字段保存所有 Memory 类型共享的身份与归属信息。
     """
+
+    # MemoryItem 的唯一标识。
     item_id: str
+
+    # 记忆所属的长期 Memory Space，当前通常对应一个 Bot 的长期记忆空间。
     memory_space_id: str
+
+    # 记忆在 Memory Space 内的长期归属范围，也是召回粗筛的重要依据。
     scopes: frozenset[MemoryScopeRef]
+
+    # 具体的 Memory 业务内容，如 Fact、Experience 等。
     payload: MemoryPayload
 
     def __post_init__(self) -> None:
@@ -219,14 +232,42 @@ class MemoryItem:
 
 @dataclass(frozen=True)
 class MemoryRecallContext:
-    """当前召回场景中可用于粗粒度候选检索的长期主体。"""
+    """
+    当前召回场景中可用于粗粒度候选检索的长期主体。
+
+    Memory Space 已经由上层路由完成；这里只判断同一空间内的
+    Scope 是否允许 MemoryItem 进入候选集。
+    """
 
     scopes: frozenset[MemoryScopeRef]
+
+    def matches(self, item: MemoryItem) -> bool:
+        """
+        判断当前召回上下文是否命中 MemoryItem 的长期归属范围。
+
+        GLOBAL 记忆始终可以进入粗候选集；其他记忆只需有一个归属
+        Scope 与当前上下文匹配。这里不判断语义相关性、敏感度或是否
+        适合向当前参与者披露。
+        """
+
+        has_global_scope = any(
+            scope.kind is MemoryScopeKind.GLOBAL
+            for scope in item.scopes
+        )
+        if has_global_scope:
+            return True
+
+        return not item.scopes.isdisjoint(self.scopes)
 
 
 @dataclass
 class MemoryRetrievalCandidate:
-    """检索出来的记忆候选"""
+    """
+    Retriever 输出的候选记忆。
+
+    memory 为召回到的正式 MemoryItem，
+    score 表示该候选在当前检索阶段的相关性得分。
+    """
 
     memory: MemoryItem
     score: float
@@ -235,7 +276,11 @@ class MemoryRetrievalCandidate:
 @dataclass
 class MemoryExtractionMessage:
     """
-    用户与AI的原始聊天消息
+    Extraction 阶段使用的完整上下文。
+
+    new_messages 是本次允许作为新记忆来源的消息；
+    summary 和 recent_messages 只用于辅助理解当前消息；
+    provenance 用于记录本次提取结果对应的来源信息。
     """
 
     message_id: str
@@ -289,6 +334,8 @@ class MemoryCandidate:
     """
 
     candidate_id: str
+
+    #原始内容
     content: str
     provenance: tuple[Provenance, ...]
     source_message_ids: tuple[str, ...]
