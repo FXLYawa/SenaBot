@@ -27,12 +27,11 @@ def _validate_time_range(
     try:
         is_reversed = end < start
     except TypeError as error:
-        raise ValueError(
-            f"{field_name} must use compatible datetimes"
-        ) from error
+        raise ValueError(f"{field_name} must use compatible datetimes") from error
 
     if is_reversed:
         raise ValueError(f"{field_name} end must not precede start")
+
 
 @dataclass(frozen=True)
 class Entity:
@@ -40,6 +39,7 @@ class Entity:
 
     entity_type: str
     entity_id: str
+
 
 @dataclass(frozen=True)
 class Provenance:
@@ -70,6 +70,7 @@ class MemoryScopeRef:
 
     持久化检索与召回粗筛的重要过滤依据之一
     """
+
     kind: MemoryScopeKind
     scope_id: str | None
 
@@ -81,9 +82,7 @@ class MemoryScopeRef:
             return
 
         if self.scope_id is None or not self.scope_id.strip():
-            raise ValueError(
-                f"{self.kind.value} scope_id must not be blank"
-            )
+            raise ValueError(f"{self.kind.value} scope_id must not be blank")
 
 
 class MemoryDomain(StrEnum):
@@ -104,15 +103,15 @@ class Fact:
 
     DOMAIN: ClassVar[MemoryDomain] = MemoryDomain.FACT
 
-    #暂时先用自然语言,后续可扩展为多类型
+    # 暂时先用自然语言,后续可扩展为多类型
     content: str
 
     provenance: tuple[Provenance, ...]
 
     recorded_at: datetime
 
-    valid_from:datetime | None = None
-    valid_to:datetime | None = None
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
 
     def __post_init__(self) -> None:
         _require_non_blank(self.content, "fact content")
@@ -138,7 +137,6 @@ class Experience:
     recorded_at: datetime
 
     def __post_init__(self) -> None:
-
         """类型约束"""
         _require_non_blank(self.summary, "experience summary")
         _require_provenance(self.provenance)
@@ -151,7 +149,6 @@ class Experience:
 
 @dataclass(frozen=True)
 class Understanding:
-
     """Bot形成的对于用户的长期认知和理解"""
 
     DOMAIN: ClassVar[MemoryDomain] = MemoryDomain.UNDERSTANDING
@@ -174,7 +171,6 @@ class Understanding:
 
 @dataclass(frozen=True)
 class Knowledge:
-
     """Sena学会的专业性的知识内容"""
 
     DOMAIN: ClassVar[MemoryDomain] = MemoryDomain.KNOWLEDGE
@@ -187,7 +183,9 @@ class Knowledge:
         _require_non_blank(self.content, "knowledge content")
         _require_provenance(self.provenance)
 
+
 MemoryPayload: TypeAlias = Fact | Experience | Understanding | Knowledge
+
 
 @dataclass
 class MemoryItem:
@@ -215,13 +213,10 @@ class MemoryItem:
             raise ValueError("memory scopes must not be empty")
 
         has_global_scope = any(
-            scope.kind is MemoryScopeKind.GLOBAL
-            for scope in self.scopes
+            scope.kind is MemoryScopeKind.GLOBAL for scope in self.scopes
         )
         if has_global_scope and len(self.scopes) != 1:
-            raise ValueError(
-                "global scope cannot be combined with other scopes"
-            )
+            raise ValueError("global scope cannot be combined with other scopes")
 
     @property
     def domain(self) -> MemoryDomain:
@@ -251,8 +246,7 @@ class MemoryRecallContext:
         """
 
         has_global_scope = any(
-            scope.kind is MemoryScopeKind.GLOBAL
-            for scope in item.scopes
+            scope.kind is MemoryScopeKind.GLOBAL for scope in item.scopes
         )
         if has_global_scope:
             return True
@@ -315,6 +309,7 @@ class MemoryExtractionInput:
 @dataclass
 class MemoryExtractionContext:
     """组装后的上下文"""
+
     new_messages: list[MemoryExtractionMessage]
     summary: str | None
     recent_messages: list[MemoryExtractionMessage]
@@ -335,7 +330,7 @@ class MemoryCandidate:
 
     candidate_id: str
 
-    #原始内容
+    # 原始内容
     content: str
     provenance: tuple[Provenance, ...]
     source_message_ids: tuple[str, ...]
@@ -351,9 +346,7 @@ class MemoryCandidate:
         for source_message_id in self.source_message_ids:
             _require_non_blank(source_message_id, "source_message_id")
 
-        if len(set(self.source_message_ids)) != len(
-            self.source_message_ids
-        ):
+        if len(set(self.source_message_ids)) != len(self.source_message_ids):
             raise ValueError("source_message_ids must not contain duplicates")
 
 
@@ -385,13 +378,10 @@ class MemoryFormationInput:
             raise ValueError("memory scopes must not be empty")
 
         has_global_scope = any(
-            scope.kind is MemoryScopeKind.GLOBAL
-            for scope in self.scopes
+            scope.kind is MemoryScopeKind.GLOBAL for scope in self.scopes
         )
         if has_global_scope and len(self.scopes) != 1:
-            raise ValueError(
-                "global scope cannot be combined with other scopes"
-            )
+            raise ValueError("global scope cannot be combined with other scopes")
 
 
 @dataclass(frozen=True)

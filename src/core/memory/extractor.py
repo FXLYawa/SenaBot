@@ -45,13 +45,9 @@ class LLMMemoryExtractor:
 
         summary = context.summary or "无"
 
-        recent_messages = self._format_messages(
-            context.recent_messages
-        )
+        recent_messages = self._format_messages(context.recent_messages)
 
-        new_messages = self._format_messages(
-            context.new_messages
-        )
+        new_messages = self._format_messages(context.new_messages)
 
         return MEMORY_EXTRACTION_PROMPT.format(
             summary=summary,
@@ -83,20 +79,15 @@ class LLMMemoryExtractor:
         data = json.loads(response)
 
         if not isinstance(data, dict):
-            raise ValueError(
-                "memory extraction response must be a JSON object"
-            )
+            raise ValueError("memory extraction response must be a JSON object")
 
         memories = data.get("memories", [])
 
         if not isinstance(memories, list):
-            raise ValueError(
-                "memory extraction memories must be a JSON array"
-            )
+            raise ValueError("memory extraction memories must be a JSON array")
 
         valid_source_message_ids = {
-            message.message_id
-            for message in context.new_messages
+            message.message_id for message in context.new_messages
         }
 
         candidates = []
@@ -114,18 +105,14 @@ class LLMMemoryExtractor:
                 not isinstance(source_message_ids, list)
                 or not source_message_ids
                 or any(
-                    not isinstance(message_id, str)
-                    or not message_id.strip()
+                    not isinstance(message_id, str) or not message_id.strip()
                     for message_id in source_message_ids
                 )
             ):
                 continue
 
             normalized_source_ids = tuple(
-                dict.fromkeys(
-                    message_id.strip()
-                    for message_id in source_message_ids
-                )
+                dict.fromkeys(message_id.strip() for message_id in source_message_ids)
             )
 
             if any(
@@ -133,8 +120,7 @@ class LLMMemoryExtractor:
                 for message_id in normalized_source_ids
             ):
                 raise ValueError(
-                    "memory candidate source_message_ids must reference "
-                    "new messages"
+                    "memory candidate source_message_ids must reference " "new messages"
                 )
 
             candidates.append(

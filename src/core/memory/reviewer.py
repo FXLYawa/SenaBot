@@ -34,16 +34,15 @@ class LLMMemoryReviewer:
         prompt = self._build_prompt(input_data)
         response = await self._llm.generate(prompt)
 
-        #把plan从字符串转换为Python对象
+        # 把plan从字符串转换为Python对象
         plan = _MemoryReviewResponseParser(input_data.payload).parse(response)
-        #验证
+        # 验证
         plan.validate_against(input_data.related_items)
 
         return plan
 
     @classmethod
     def _build_prompt(cls, input_data: MemoryReviewInput) -> str:
-
         """把 payload 和相关记忆都转为字符串塞进prompt"""
         return MEMORY_REVIEW_PROMPT.format(
             payload=json.dumps(
@@ -117,6 +116,7 @@ class LLMMemoryReviewer:
             "entity_id": entity.entity_id,
         }
 
+
 class _MemoryReviewResponseParser:
     """将 LLM 的 JSON 响应转换为 MemoryChangePlan。"""
 
@@ -134,8 +134,7 @@ class _MemoryReviewResponseParser:
             raise ValueError("memory review operations must be a list")
 
         operations = tuple(
-            self._parse_operation(operation_data)
-            for operation_data in operations_data
+            self._parse_operation(operation_data) for operation_data in operations_data
         )
         plan = MemoryChangePlan(operations=operations)
         self._validate_operations_for_payload(plan)
@@ -147,9 +146,7 @@ class _MemoryReviewResponseParser:
         data: Any,
     ) -> MemoryChangeOperation:
         if not isinstance(data, dict):
-            raise ValueError(
-                "memory review operation must be a JSON object"
-            )
+            raise ValueError("memory review operation must be a JSON object")
 
         operation_type = data.get("type")
         if not isinstance(operation_type, str):
@@ -167,18 +164,14 @@ class _MemoryReviewResponseParser:
             raise ValueError("invalid memory review operation type")
 
         if set(data) - operation_fields:
-            raise ValueError(
-                "memory review operation contains unsupported fields"
-            )
+            raise ValueError("memory review operation contains unsupported fields")
 
         if operation_type == "add":
             return AddMemoryItem(payload=self._payload)
 
         if operation_type == "end_fact_validity":
             if not isinstance(self._payload, Fact):
-                raise ValueError(
-                    "end_fact_validity requires a Fact payload"
-                )
+                raise ValueError("end_fact_validity requires a Fact payload")
 
             return EndFactValidity(
                 target_item_id=self._require_text(
@@ -223,8 +216,7 @@ class _MemoryReviewResponseParser:
             )
 
         if any(
-            not isinstance(operation, allowed_types)
-            for operation in plan.operations
+            not isinstance(operation, allowed_types) for operation in plan.operations
         ):
             raise ValueError(
                 "memory review operation is not allowed for payload domain"

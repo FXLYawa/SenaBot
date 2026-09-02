@@ -59,6 +59,4 @@ class SimpleMemorySpaceRouter:
         try:
             return self._spaces[memory_space_id]
         except KeyError as error:
-            raise ValueError(
-                f"memory space not found: {memory_space_id}"
-            ) from error
+            raise ValueError(f"memory space not found: {memory_space_id}") from error

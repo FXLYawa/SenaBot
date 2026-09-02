@@ -12,7 +12,6 @@ from core.memory.models import (
 )
 from core.memory.service import MemoryService
 
-
 PROVENANCE = (Provenance("event", "event-001"),)
 
 
@@ -168,9 +167,9 @@ async def test_extract_rejects_non_object_top_level() -> None:
 @pytest.mark.asyncio
 async def test_extract_rejects_non_array_memories() -> None:
     with pytest.raises(ValueError, match="must be a JSON array"):
-        await LLMMemoryExtractor(
-            FakeLLM('{"memories": {}}')
-        ).extract(extraction_context())
+        await LLMMemoryExtractor(FakeLLM('{"memories": {}}')).extract(
+            extraction_context()
+        )
 
 
 @pytest.mark.asyncio
@@ -188,14 +187,11 @@ async def test_extract_rejects_source_outside_new_messages() -> None:
     )
 
     with pytest.raises(ValueError, match="must reference new messages"):
-        await LLMMemoryExtractor(FakeLLM(response)).extract(
-            extraction_context()
-        )
+        await LLMMemoryExtractor(FakeLLM(response)).extract(extraction_context())
 
 
 @pytest.mark.asyncio
-async def test_prompt_limits_context_and_assistant_to_supporting_information(
-) -> None:
+async def test_prompt_limits_context_and_assistant_to_supporting_information() -> None:
     llm = FakeLLM('{"memories": []}')
 
     await LLMMemoryExtractor(llm).extract(extraction_context())
@@ -205,22 +201,12 @@ async def test_prompt_limits_context_and_assistant_to_supporting_information(
     assert "不能直接作为本次新记忆的来源" in llm.prompt
     assert (
         "不得把 Assistant 的推测、建议或未经用户确认的信息"
-        "作为用户事实提取"
-        in llm.prompt
+        "作为用户事实提取" in llm.prompt
     )
     assert "历史摘要：\n用户喜欢跑步" in llm.prompt
-    assert (
-        "最近消息：\n[history-001] user: 我上周去了杭州"
-        in llm.prompt
-    )
-    assert (
-        "当前新消息：\n[message-001] user: 今天有点累"
-        in llm.prompt
-    )
-    assert (
-        "[message-002] assistant: 你可能最近工作太多了"
-        in llm.prompt
-    )
+    assert "最近消息：\n[history-001] user: 我上周去了杭州" in llm.prompt
+    assert "当前新消息：\n[message-001] user: 今天有点累" in llm.prompt
+    assert "[message-002] assistant: 你可能最近工作太多了" in llm.prompt
     assert '"source_message_ids": ["message-001"]' in llm.prompt
 
 
@@ -268,27 +254,3 @@ async def test_service_builds_context_and_delegates_to_extractor() -> None:
         recent_messages=recent_messages,
         provenance=PROVENANCE,
     )
-
-
-@pytest.mark.asyncio
-async def test_service_requires_configured_extractor() -> None:
-    unused_dependency = object()
-    service = MemoryService(
-        extractor=None,
-        embedder=unused_dependency,
-        memory_spaces=unused_dependency,
-        reranker=unused_dependency,
-        materializer=unused_dependency,
-        reviewer=unused_dependency,
-        executor=unused_dependency,
-    )
-
-    with pytest.raises(RuntimeError, match="memory extractor is not configured"):
-        await service.extract(
-            MemoryExtractionInput(
-                messages=[],
-                provenance=PROVENANCE,
-            ),
-            summary=None,
-            recent_messages=[],
-        )

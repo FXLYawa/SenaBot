@@ -27,6 +27,7 @@ def _new_item_id() -> str:
 @dataclass(frozen=True)
 class MemoryChangeExecutionInput:
     """将变更计划转换为正式写入命令所需的上下文。"""
+
     # Reviewer 已确认的 Memory 变更计划，Executor 按其中操作落地。
     plan: MemoryChangePlan
     related_items: tuple[MemoryItem, ...]
@@ -43,13 +44,10 @@ class MemoryChangeExecutionInput:
             raise ValueError("memory scopes must not be empty")
 
         has_global_scope = any(
-            scope.kind is MemoryScopeKind.GLOBAL
-            for scope in self.scopes
+            scope.kind is MemoryScopeKind.GLOBAL for scope in self.scopes
         )
         if has_global_scope and len(self.scopes) != 1:
-            raise ValueError(
-                "global scope cannot be combined with other scopes"
-            )
+            raise ValueError("global scope cannot be combined with other scopes")
 
         if not self.operation_id.strip():
             raise ValueError("operation_id must not be blank")
@@ -93,9 +91,7 @@ class MemoryChangeExecutor:
 
             # 直接添加正式 MemoryItem。
             if isinstance(operation, AddMemoryItem):
-                added_items.append(
-                    await self._execute_add(operation, input_data)
-                )
+                added_items.append(await self._execute_add(operation, input_data))
                 continue
 
             # 结束旧 Fact 的有效期。
@@ -118,9 +114,7 @@ class MemoryChangeExecutor:
                 added_items.append(result.replacement_item)
                 continue
 
-            raise TypeError(
-                f"unsupported memory change operation: {type(operation)!r}"
-            )
+            raise TypeError(f"unsupported memory change operation: {type(operation)!r}")
 
         return MemoryChangeExecutionResult(
             added_items=tuple(added_items),
@@ -132,7 +126,6 @@ class MemoryChangeExecutor:
         operation: AddMemoryItem,
         input_data: MemoryChangeExecutionInput,
     ) -> MemoryItem:
-
         """组装新增记忆并交给持久化端口。"""
         return await self._repository.add(
             self._build_envelope(operation.payload, input_data)
@@ -170,7 +163,6 @@ class MemoryChangeExecutor:
         payload: MemoryPayload,
         input_data: MemoryChangeExecutionInput,
     ) -> MemoryWriteEnvelope:
-
         """把MemoryPayload转为正式写入对象"""
         return MemoryWriteEnvelope(
             operation_id=input_data.operation_id,

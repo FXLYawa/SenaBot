@@ -2,7 +2,6 @@ from .extraction import MEMORY_EXTRACTION_PROMPT
 from .materialization import MEMORY_MATERIALIZATION_PROMPT
 from .review import MEMORY_REVIEW_PROMPT
 
-
 __all__ = [
     "MEMORY_EXTRACTION_PROMPT",
     "MEMORY_MATERIALIZATION_PROMPT",

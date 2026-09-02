@@ -33,8 +33,7 @@ class MemoryExtractorProtocol(Protocol):
     async def extract(
         self,
         context: MemoryExtractionContext,
-    ) -> list[MemoryCandidate]:
-        ...
+    ) -> list[MemoryCandidate]: ...
 
 
 class MemoryMaterializerProtocol(Protocol):
@@ -43,8 +42,7 @@ class MemoryMaterializerProtocol(Protocol):
     async def materialize(
         self,
         input_data: MemoryMaterializationInput,
-    ) -> MemoryPayload:
-        ...
+    ) -> MemoryPayload: ...
 
 
 class MemoryEmbeddingProtocol(Protocol):
@@ -53,8 +51,7 @@ class MemoryEmbeddingProtocol(Protocol):
     async def embed(
         self,
         query: str,
-    ) -> list[float]:
-        ...
+    ) -> list[float]: ...
 
 
 class MemoryRetrieverProtocol(Protocol):
@@ -65,8 +62,7 @@ class MemoryRetrieverProtocol(Protocol):
         query_embedding: list[float],
         *,
         context: MemoryRecallContext,
-    ) -> list[MemoryRetrievalCandidate]:
-        ...
+    ) -> list[MemoryRetrievalCandidate]: ...
 
 
 class MemorySpaceRouterProtocol(Protocol):
@@ -75,8 +71,7 @@ class MemorySpaceRouterProtocol(Protocol):
     def for_space(
         self,
         memory_space_id: str,
-    ) -> MemoryRetrieverProtocol:
-        ...
+    ) -> MemoryRetrieverProtocol: ...
 
 
 class MemoryRerankerProtocol(Protocol):
@@ -86,21 +81,19 @@ class MemoryRerankerProtocol(Protocol):
         self,
         query: str,
         candidates: list[MemoryRetrievalCandidate],
-    ) -> list[MemoryRetrievalCandidate]:
-        ...
+    ) -> list[MemoryRetrievalCandidate]: ...
 
 
 class MemoryLLMProtocol(Protocol):
     """
-       Memory提取器所需的最小LLM调用能力
+    Memory提取器所需的最小LLM调用能力
 
     """
 
     async def generate(
         self,
         prompt: str,
-    ) -> str:
-        ...
+    ) -> str: ...
 
 
 class MemoryRepositoryProtocol(Protocol):
@@ -109,8 +102,7 @@ class MemoryRepositoryProtocol(Protocol):
     async def add(
         self,
         envelope: MemoryWriteEnvelope,
-    ) -> MemoryItem:
-        ...
+    ) -> MemoryItem: ...
 
     async def end_fact_validity(
         self,
@@ -118,8 +110,7 @@ class MemoryRepositoryProtocol(Protocol):
         operation_id: str,
         target_item_id: str,
         valid_to: datetime,
-    ) -> MemoryItem:
-        ...
+    ) -> MemoryItem: ...
 
     async def supersede(
         self,
@@ -127,8 +118,7 @@ class MemoryRepositoryProtocol(Protocol):
         operation_id: str,
         target_item_id: str,
         replacement: MemoryWriteEnvelope,
-    ) -> MemorySupersedeResult:
-        ...
+    ) -> MemorySupersedeResult: ...
 
 
 class MemoryReviewerProtocol(Protocol):
@@ -137,8 +127,7 @@ class MemoryReviewerProtocol(Protocol):
     async def review(
         self,
         input_data: MemoryReviewInput,
-    ) -> MemoryChangePlan:
-        ...
+    ) -> MemoryChangePlan: ...
 
 
 class MemoryChangeExecutorProtocol(Protocol):
@@ -147,5 +136,4 @@ class MemoryChangeExecutorProtocol(Protocol):
     async def execute(
         self,
         input_data: MemoryChangeExecutionInput,
-    ) -> MemoryChangeExecutionResult:
-        ...
+    ) -> MemoryChangeExecutionResult: ...

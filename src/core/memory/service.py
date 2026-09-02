@@ -125,9 +125,7 @@ class MemoryService:
         """
 
         # 向量化输入
-        query_embedding = await self.embedder.embed(
-            input_data.candidate.content
-        )
+        query_embedding = await self.embedder.embed(input_data.candidate.content)
 
         # 根据 Memory Space 路由到对应的记忆空间后检索相关记忆。
         retriever = self.memory_spaces.for_space(input_data.memory_space_id)
@@ -137,9 +135,7 @@ class MemoryService:
         )
 
         # 得到相关记忆集合
-        related_items = tuple(
-            candidate.memory for candidate in retrieval_candidates
-        )
+        related_items = tuple(candidate.memory for candidate in retrieval_candidates)
 
         # 得到 payload
         payload = await self.materializer.materialize(
@@ -177,9 +173,6 @@ class MemoryService:
         recent_messages: list[MemoryExtractionMessage],
     ) -> list[MemoryCandidate]:
         """组装提取上下文并提取长期记忆候选。"""
-
-        if self.extractor is None:
-            raise RuntimeError("memory extractor is not configured")
 
         # 得到组装后的上下文
         context = MemoryExtractionContext(

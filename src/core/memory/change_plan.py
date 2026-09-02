@@ -75,8 +75,7 @@ class SupersedeMemoryItem:
 
         if not isinstance(target.payload, (Understanding, Knowledge)):
             raise ValueError(
-                "SupersedeMemoryItem target must be an Understanding "
-                "or Knowledge"
+                "SupersedeMemoryItem target must be an Understanding " "or Knowledge"
             )
 
         if type(self.replacement) is not type(target.payload):
@@ -115,39 +114,29 @@ class MemoryChangePlan:
         """校验只依赖 plan 自身的结构不变量。"""
 
         if not self.operations:
-            raise ValueError(
-                "memory change plan operations must not be empty"
-            )
+            raise ValueError("memory change plan operations must not be empty")
 
         add_count = sum(
             isinstance(operation, AddMemoryItem) for operation in self.operations
         )
         supersede_count = sum(
-            isinstance(operation, SupersedeMemoryItem)
-            for operation in self.operations
+            isinstance(operation, SupersedeMemoryItem) for operation in self.operations
         )
         no_change_count = sum(
-            isinstance(operation, NoMemoryChange)
-            for operation in self.operations
+            isinstance(operation, NoMemoryChange) for operation in self.operations
         )
 
         if add_count > 1:
             raise ValueError("memory review plan must not add payload twice")
 
         if supersede_count > 1:
-            raise ValueError(
-                "memory review plan must not supersede with payload twice"
-            )
+            raise ValueError("memory review plan must not supersede with payload twice")
 
         if supersede_count and add_count:
-            raise ValueError(
-                "memory review plan must not combine supersede and add"
-            )
+            raise ValueError("memory review plan must not combine supersede and add")
 
         if no_change_count and len(self.operations) != 1:
-            raise ValueError(
-                "NoMemoryChange cannot be combined with other operations"
-            )
+            raise ValueError("NoMemoryChange cannot be combined with other operations")
 
         operated_target_ids: set[str] = set()
         for operation in self.operations:
@@ -182,8 +171,7 @@ class MemoryChangePlan:
 
             if target is None:
                 raise ValueError(
-                    "memory change operation target must reference "
-                    "a related item"
+                    "memory change operation target must reference " "a related item"
                 )
 
             operation.validate_target(target)
