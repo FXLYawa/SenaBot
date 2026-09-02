@@ -177,10 +177,4 @@ class MemoryChangePlan:
             operation.validate_target(target)
 
 
-def validate_memory_change_plan(
-    plan: MemoryChangePlan,
-    related_items: tuple[MemoryItem, ...],
-) -> None:
-    """兼容旧调用入口，委托给 MemoryChangePlan 自身校验。"""
 
-    plan.validate_against(related_items)
