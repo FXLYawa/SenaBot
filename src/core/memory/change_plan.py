@@ -98,10 +98,7 @@ class NoMemoryChange:
 
 
 MemoryChangeOperation: TypeAlias = (
-    AddMemoryItem
-    | EndFactValidity
-    | SupersedeMemoryItem
-    | NoMemoryChange
+    AddMemoryItem | EndFactValidity | SupersedeMemoryItem | NoMemoryChange
 )
 
 
@@ -123,8 +120,7 @@ class MemoryChangePlan:
             )
 
         add_count = sum(
-            isinstance(operation, AddMemoryItem)
-            for operation in self.operations
+            isinstance(operation, AddMemoryItem) for operation in self.operations
         )
         supersede_count = sum(
             isinstance(operation, SupersedeMemoryItem)
@@ -173,10 +169,7 @@ class MemoryChangePlan:
     ) -> None:
         """校验变更计划引用的已有 Memory 是否存在且领域匹配。"""
 
-        related_by_id = {
-            item.item_id: item
-            for item in related_items
-        }
+        related_by_id = {item.item_id: item for item in related_items}
 
         for operation in self.operations:
             if not isinstance(
@@ -200,5 +193,6 @@ def validate_memory_change_plan(
     plan: MemoryChangePlan,
     related_items: tuple[MemoryItem, ...],
 ) -> None:
-    """校验变更计划引用的目标及领域生命周期是否合法。"""
+    """兼容旧调用入口，委托给 MemoryChangePlan 自身校验。"""
+
     plan.validate_against(related_items)
