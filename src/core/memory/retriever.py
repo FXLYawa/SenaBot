@@ -1,41 +1,62 @@
+from collections.abc import Iterable, Mapping
+
 from .models import (
-    MemoryQueryCriteria,
+    MemoryItem,
+    MemoryRecallContext,
     MemoryRetrievalCandidate,
 )
-from .protocols import MemoryRepositoryProtocol
+from .protocols import MemoryRetrieverProtocol
 
 
 class SimpleMemoryRetriever:
-    """MVP 阶段的简单长期记忆检索器。"""
+    """基于单个 Memory Space 内存快照和 Scope 过滤的占位检索器。
+
+    该实现只用于本地测试和 MVP 编排验证；它接收 query embedding，
+    但不计算语义相关性，也不代表正式 Data 层检索能力。
+    """
 
     def __init__(
         self,
-        repository: MemoryRepositoryProtocol,
+        items: Iterable[MemoryItem] = (),
     ) -> None:
-        self._repository = repository
+        self._items = tuple(items)
 
     async def retrieve(
         self,
         query_embedding: list[float],
         *,
-        user_id: str,
-        session_id: str,
-        group_id: str,
+        context: MemoryRecallContext,
     ) -> list[MemoryRetrievalCandidate]:
-        # MVP 仅按 scope 获取候选，后续替换为真实向量检索。
-        criteria = MemoryQueryCriteria(
-            query_text="",
-            user_id=user_id,
-            session_id=session_id,
-            group_id=group_id,
-        )
-        # 简单占位实现，暂不根据 query_embedding 计算相关性分数。
-        memories = await self._repository.query(criteria)
-
+        """还没有具体实现。"""
         return [
             MemoryRetrievalCandidate(
-                memory=memory,
+                memory=item,
                 score=0.0,
             )
-            for memory in memories
+            for item in self._items
+            if context.matches(item)
         ]
+
+
+class SimpleMemorySpaceRouter:
+    """MVP 用的 Memory Space 路由壳。
+
+    真实向量库实现可以把 memory_space_id 映射到 namespace、tenant、
+    partition 或带 tenant 过滤的 collection。这里先映射到一个
+    已经代表单个 Memory Space 的 retriever。
+    """
+
+    def __init__(
+        self,
+        spaces: Mapping[str, MemoryRetrieverProtocol],
+    ) -> None:
+        self._spaces = dict(spaces)
+
+    def for_space(
+        self,
+        memory_space_id: str,
+    ) -> MemoryRetrieverProtocol:
+        try:
+            return self._spaces[memory_space_id]
+        except KeyError as error:
+            raise ValueError(f"memory space not found: {memory_space_id}") from error
