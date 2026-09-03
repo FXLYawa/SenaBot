@@ -1,6 +1,17 @@
+from datetime import UTC, datetime
+
 from .contracts import (
     MemoryQueryRequest,
     MemoryQueryResult,
+    MemoryWriteRequest,
+    MemoryWriteResult,
+)
+from .converters import (
+    build_candidate_scopes,
+    build_recall_context,
+    to_extraction_messages,
+    to_provenance,
+    to_write_result,
 )
 from .executor import (
     MemoryChangeExecutionInput,
@@ -164,6 +175,52 @@ class MemoryService:
                 operation_id=input_data.operation_id,
             )
         )
+
+    async def write(
+        self,
+        request: MemoryWriteRequest,
+    ) -> MemoryWriteResult:
+        """执行一次公开写入请求，串联 Extraction 与 Formation 主链路。"""
+
+        # 提取候选记忆,并融入相关的上下文消息和总结
+        candidates = await self.extract(
+            MemoryExtractionInput(
+                messages=to_extraction_messages(request.messages),
+                provenance=to_provenance(request),
+            ),
+            summary=request.summary,
+            recent_messages=to_extraction_messages(request.recent_messages),
+        )
+
+        # 组装form阶段所需要的数据
+        recorded_at = request.recorded_at or datetime.now(UTC)
+
+        # 查找记忆时的记忆边界
+        recall_context = build_recall_context(request)
+
+        # 写入记忆时的scope字段,表明记忆归属的边界
+        scopes = build_candidate_scopes(request)
+
+        # 最终写入后的结果
+        execution_results: list[MemoryChangeExecutionResult] = []
+
+        #form阶段,即确定Memory类型和相应的写入plan,并执行写入
+        for candidate in candidates:
+            execution_results.append(
+                await self.form(
+                    MemoryFormationInput(
+                        candidate=candidate,
+                        recorded_at=recorded_at,
+                        recall_context=recall_context,
+                        memory_space_id=request.memory_space_id,
+                        scopes=scopes,
+                        operation_id=request.operation_id,
+                    )
+                )
+            )
+
+        # 返回写入结果
+        return to_write_result(request, execution_results)
 
     async def extract(
         self,

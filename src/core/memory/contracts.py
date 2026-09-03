@@ -1,6 +1,9 @@
 from dataclasses import dataclass
+from datetime import datetime
 
 from .models import MemoryItem
+
+Memory = MemoryItem
 
 
 @dataclass
@@ -44,3 +47,124 @@ class MemoryQueryResult:
 
     # 返回的记忆
     memories: list[MemoryItem]
+
+
+@dataclass(frozen=True)
+class MemoryWriteMessage:
+    """
+    Memory 写入事件中的公开消息结构。
+    表明一条消息的发起者和具体内容
+
+    只描述上游可以确定的消息事实，
+    不暴露 Memory 内部 Extraction 模型。
+    """
+
+    # 唯一ID
+    message_id: str
+
+    # 由什么角色发起
+    role: str
+
+    # 具体内容
+    content: str
+
+    def __post_init__(self) -> None:
+        if not self.message_id.strip():
+            raise ValueError("message_id must not be blank")
+        if not self.role.strip():
+            raise ValueError("role must not be blank")
+        if not self.content.strip():
+            raise ValueError("content must not be blank")
+
+
+@dataclass(frozen=True)
+class MemoryWriteRequest:
+    """
+    触发一次完整 Memory 写入流程的公开请求。
+
+    Memory 内部会自行完成：
+    Extraction -> Candidate -> Formation -> Change Execution。
+    """
+
+    # 用于关联整个写入流程及上游 PendingOperation。
+    operation_id: str
+
+    # 当前长期 Memory Space。
+    # 当前接口暂时由上游提供；persona_id / bot_id 到
+    # memory_space_id 的映射责任可继续单独确认。
+    memory_space_id: str
+
+    # 当前交互场景中的客观身份信息。
+    user_id: str
+    session_id: str
+    group_id: str
+
+    # 具体作为长期记忆的写入消息。
+    messages: tuple[MemoryWriteMessage, ...]
+
+    # Extraction 可以参考但不能直接作为本轮新记忆来源的上下文。
+    recent_messages: tuple[MemoryWriteMessage, ...] = ()
+    summary: str | None = None
+
+    # 本轮写入来源事件。
+    # Memory 内部据此构造 Provenance。
+    source_event_id: str = ""
+
+    # 本轮信息被 Memory 记录的时间。
+    recorded_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if not self.operation_id.strip():
+            raise ValueError("operation_id must not be blank")
+        if not self.memory_space_id.strip():
+            raise ValueError("memory_space_id must not be blank")
+        if not self.user_id.strip():
+            raise ValueError("user_id must not be blank")
+        if not self.session_id.strip():
+            raise ValueError("session_id must not be blank")
+        if not self.source_event_id.strip():
+            raise ValueError("source_event_id must not be blank")
+        if not self.messages:
+            raise ValueError("messages must not be empty")
+
+
+@dataclass(frozen=True)
+class MemoryWriteResult:
+    """
+    一次完整 Memory 写入流程的公开结果。
+
+    只暴露最终受到影响的正式 MemoryItem 标识，
+    不暴露 Candidate、ChangePlan、ExecutionResult 等内部模型。
+    """
+
+    operation_id: str
+    memory_space_id: str
+
+    added_item_ids: tuple[str, ...] = ()
+    updated_item_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class MemoryErrorInfo:
+    """Memory 事件链路中的失败信息。"""
+
+    code: str
+    message: str
+
+
+@dataclass(frozen=True)
+class MemoryQueryFailedEventData:
+    """Memory 查询事件处理失败。"""
+
+    query_id: str
+    memory_space_id: str
+    error: MemoryErrorInfo
+
+
+@dataclass(frozen=True)
+class MemoryWriteFailedEventData:
+    """Memory 写入事件处理失败。"""
+
+    operation_id: str
+    memory_space_id: str
+    error: MemoryErrorInfo

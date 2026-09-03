@@ -106,23 +106,39 @@ Memory 不负责：
 - 实现当前尚不存在的正式 Data 层、向量数据库或事务；
 - 仅凭 `operation_id` 承诺完整幂等。
 
+## 公开事件
+
+Memory 当前已经提供 Event 接入入口。组合根安装 `MemoryModule` 后，其他模块通过事件请求查询或写入：
+
+```text
+memory.query.requested
+    -> MemoryService.query()
+    -> memory.query.completed / memory.query.failed
+
+memory.write.requested
+    -> MemoryService.write()
+    -> memory.write.completed / memory.write.failed
+```
+
+事件 Handler 只做边界适配。Extraction、Formation、Review、Execute 仍然是 Memory 内部流程，不作为跨模块事件暴露。
+
 ## 文档导航
 
-- [公开 API](public-api.md)：Service 方法、输入输出结构、依赖协议和失败行为。
+- [公开 API](public-api.md)：Service 方法、事件 Payload、输入输出结构、依赖协议和失败行为。
 - [领域模型](domain-model.md)：四类 Payload、Scope、生命周期和 ChangePlan 约束。
-- [接入指南](integration-guide.md)：装配依赖并调用 Extraction、Formation 和 Recall。
+- [接入指南](integration-guide.md)：装配依赖并调用 Query、Write、Extraction、Formation 和 Event 接口。
 
-Memory 内部维护指南后续放在 `src/core/memory/README.md`；外部 Module 不应依赖 LLM Prompt、JSON 解析器或 Executor 私有方法。
+Memory 内部维护指南见 `src/core/memory/README.md`；外部 Module 不应依赖 LLM Prompt、JSON 解析器、Converter 私有函数或 Executor 私有方法。
 
 ## 当前范围
 
-当前已经完成 Extraction、Formation、Recall 的业务编排和领域约束，但仍处于基础设施接入前阶段：
+当前已经完成 Extraction、Formation、Recall、Write 编排和 Event 接入的基础链路，但仍处于 MVP 基础设施阶段：
 
 - `MemoryRepositoryProtocol` 只有接口，没有正式 Data 层实现；
 - `SimpleMemoryEmbedder`、`SimpleMemoryRetriever`、`SimpleMemoryReranker` 是测试/MVP 占位实现；
 - Simple Retriever 只在内存快照上进行 Scope 过滤，不使用 embedding 计算语义相关性；
 - 写入事务、失败恢复、operation ledger 和完整幂等语义尚未实现；
-- Memory Event Payload 与 Handler 尚未形成稳定公开契约。
+- `persona_id / bot_id -> memory_space_id` 的跨模块映射责任仍需确认。
 
 运行 Memory 测试：
 

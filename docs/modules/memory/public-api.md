@@ -1,6 +1,6 @@
 # Memory 公开 API
 
-本文说明其他 Module 或组合根当前可以依赖的 Memory 契约。当前 `core.memory.__init__` 尚未提供统一导出，因此示例按对象所在子模块导入；外部调用方不应访问以下划线开头的方法或 LLM 解析细节。
+本文说明其他 Module 或组合根当前可以依赖的 Memory 契约。当前示例按对象所在子模块导入；外部调用方不应访问以下划线开头的方法、Converter 私有函数或 LLM 解析细节。
 
 ## 1. 入口与依赖
 
@@ -16,7 +16,7 @@ from core.memory.service import MemoryService
 MemoryService(
     extractor=extractor,
     embedder=embedder,
-    retriever=retriever,
+    memory_spaces=memory_spaces,
     reranker=reranker,
     materializer=materializer,
     reviewer=reviewer,
@@ -28,13 +28,13 @@ MemoryService(
 |---|---|---|
 | `extractor` | `MemoryExtractorProtocol` | 从新消息提取候选 |
 | `embedder` | `MemoryEmbeddingProtocol` | 把查询或 Candidate 文本转为向量 |
-| `retriever` | `MemoryRetrieverProtocol` | 根据向量和 Recall Context 返回候选 |
+| `memory_spaces` | `MemorySpaceRouterProtocol` | 根据 `memory_space_id` 路由到对应 Retriever |
 | `reranker` | `MemoryRerankerProtocol` | 对查询候选重新排序 |
 | `materializer` | `MemoryMaterializerProtocol` | 把 Candidate 转为 typed Payload |
 | `reviewer` | `MemoryReviewerProtocol` | 比较 Payload 与旧记忆并生成 ChangePlan |
 | `executor` | `MemoryChangeExecutorProtocol` | 校验并执行 ChangePlan |
 
-Query 和 Formation 复用 Embedder/Retriever。Reranker 目前只用于 Query；Formation 直接消费 Retriever 返回的相关记忆快照。
+Query 和 Formation 复用 Embedder/Memory Space Router/Retriever。Reranker 目前只用于 Query；Formation 直接消费 Retriever 返回的相关记忆快照。
 
 ## 2. `MemoryService.extract()`
 
@@ -130,7 +130,62 @@ Materialization 从 `candidate.provenance` 构造正式 Payload 的来源字段�
 
 `NoMemoryChange` 返回两个空 tuple。Formation 的 Repository 调用是否原子、能否重试和如何恢复失败，当前没有统一保证。
 
-## 4. `MemoryService.query()`
+## 4. `MemoryService.write()`
+
+```python
+async def write(
+    request: MemoryWriteRequest,
+) -> MemoryWriteResult:
+    ...
+```
+
+`write()` 是公开写入入口，内部串联 Extraction 和 Formation。调用方提供消息、来源、时间和归属信息，Memory 自行判断是否形成长期记忆以及如何变更旧记忆。
+
+### `MemoryWriteMessage`
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `message_id` | `str` | 消息唯一标识 |
+| `role` | `str` | 消息角色，例如 `user`、`assistant` |
+| `content` | `str` | 消息正文 |
+
+### `MemoryWriteRequest`
+
+| 字段 | 类型 | 默认值 | 含义 |
+|---|---|---|---|
+| `operation_id` | `str` | 必填 | 本次写入操作标识 |
+| `memory_space_id` | `str` | 必填 | 目标长期 Memory Space |
+| `user_id` | `str` | 必填 | 当前相关用户 |
+| `session_id` | `str` | 必填 | 当前会话 |
+| `group_id` | `str` | 必填 | 当前群聊；私聊可传空字符串 |
+| `messages` | `tuple[MemoryWriteMessage, ...]` | 必填 | 本轮允许作为新记忆来源的消息 |
+| `recent_messages` | `tuple[MemoryWriteMessage, ...]` | `()` | 只供 Extraction 辅助理解的近期消息 |
+| `summary` | `str | None` | `None` | 只供 Extraction 辅助理解的摘要 |
+| `source_event_id` | `str` | `""` | 上游事件或 Context Entry 来源 |
+| `recorded_at` | `datetime | None` | `None` | 记录时间；为空时由 Service 使用当前 UTC 时间 |
+
+`messages` 不能为空。`summary` 和 `recent_messages` 不会被当作本轮新记忆来源。
+
+### 执行顺序
+
+1. `MemoryWriteRequest` 通过 `converters.py` 转为 `MemoryExtractionInput`；
+2. `extract()` 产出零个或多个 `MemoryCandidate`；
+3. Service 构造 Recall Context 和新记忆 Scopes；
+4. 每个 Candidate 单独进入 `form()`；
+5. 多个 `MemoryChangeExecutionResult` 聚合成 `MemoryWriteResult`。
+
+### `MemoryWriteResult`
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `operation_id` | `str` | 原写入操作标识 |
+| `memory_space_id` | `str` | 原 Memory Space |
+| `added_item_ids` | `tuple[str, ...]` | 本轮新增的正式 MemoryItem ID |
+| `updated_item_ids` | `tuple[str, ...]` | 本轮更新的正式 MemoryItem ID |
+
+返回空 ID tuple 是正常结果，表示没有新增或更新正式记忆。
+
+## 5. `MemoryService.query()`
 
 ```python
 async def query(
@@ -144,18 +199,20 @@ async def query(
 | 字段 | 类型 | 含义 |
 |---|---|---|
 | `query_id` | `str` | 本次查询标识 |
+| `memory_space_id` | `str` | 要查询的长期 Memory Space，不能为空 |
 | `user_id` | `str` | 当前相关用户 |
 | `session_id` | `str` | 当前会话 |
 | `group_id` | `str` | 当前群聊 |
 | `query_text` | `str` | 用于 embedding 和 rerank 的查询文本 |
 
-Service 会根据 user/session/group 构造三个 `MemoryScopeRef`，形成 `MemoryRecallContext`。Scope 是粗粒度长期主体边界，不表示当前信息适合公开披露。
+Service 会先用 `memory_space_id` 路由到对应 Retriever，再根据 user/session/group 构造 `MemoryRecallContext`。Scope 是粗粒度长期主体边界，不表示当前信息适合公开披露。
 
 ### `MemoryQueryResult`
 
 | 字段 | 类型 | 含义 |
 |---|---|---|
 | `query_id` | `str` | 原查询标识 |
+| `memory_space_id` | `str` | 原 Memory Space |
 | `user_id` | `str` | 原用户 ID |
 | `session_id` | `str` | 原会话 ID |
 | `group_id` | `str` | 原群聊 ID |
@@ -163,7 +220,31 @@ Service 会根据 user/session/group 构造三个 `MemoryScopeRef`，形成 `Mem
 
 Service 不向调用方暴露 `MemoryRetrievalCandidate` 或 score。
 
-## 5. 依赖协议
+## 6. Event Payload
+
+组合根安装 `MemoryModule` 后，可以通过 EventBus 使用 Memory：
+
+| 事件 | Payload | 含义 |
+|---|---|---|
+| `memory.query.requested` | `MemoryQueryRequest` | 请求召回相关长期记忆 |
+| `memory.query.completed` | `MemoryQueryResult` | 查询完成 |
+| `memory.query.failed` | `MemoryQueryFailedEventData` | 查询失败 |
+| `memory.write.requested` | `MemoryWriteRequest` | 请求执行一次完整写入流程 |
+| `memory.write.completed` | `MemoryWriteResult` | 写入流程完成 |
+| `memory.write.failed` | `MemoryWriteFailedEventData` | 写入失败 |
+
+失败事件携带：
+
+```python
+@dataclass(frozen=True)
+class MemoryErrorInfo:
+    code: str
+    message: str
+```
+
+当前 `code` 使用异常类型名，`message` 用于诊断。稳定业务错误码体系尚未定义。
+
+## 7. 依赖协议
 
 ### 检索协议
 
@@ -185,6 +266,14 @@ class MemoryRerankerProtocol(Protocol):
         query: str,
         candidates: list[MemoryRetrievalCandidate],
     ) -> list[MemoryRetrievalCandidate]: ...
+```
+
+```python
+class MemorySpaceRouterProtocol(Protocol):
+    def for_space(
+        self,
+        memory_space_id: str,
+    ) -> MemoryRetrieverProtocol: ...
 ```
 
 ### Formation 协议
@@ -234,12 +323,13 @@ class MemoryRepositoryProtocol(Protocol):
 
 Repository 只负责变更持久化。Recall 由 Retriever 完成，不应重新向 Repository 添加旧式 `query_text/user_id/session_id/group_id` 查询接口。
 
-## 6. 失败行为与当前保证
+## 8. 失败行为与当前保证
 
 - 模型和 ChangePlan 边界错误抛出 `ValueError`；
 - LLM 非法 JSON 可抛出 `json.JSONDecodeError`；
 - LLM、Retriever、Repository 的异常不在 Service 内吞掉；
-- 当前没有稳定错误码体系；
+- Event Handler 会把 Service 异常转换为 `memory.*.failed`；
+- 当前没有稳定业务错误码体系；
 - `operation_id` 当前是操作来源标识，不代表完整幂等；
 - 多操作 ChangePlan 的事务边界由未来 Data 层定义；
 - 当前没有具体 Repository 实现、自动重试或失败补偿。

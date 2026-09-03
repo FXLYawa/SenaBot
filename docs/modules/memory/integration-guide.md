@@ -1,6 +1,6 @@
 # Module 接入 Memory 指南
 
-本指南说明如何在组合根中装配 Memory，并分别调用 Extraction、Formation 和 Recall。字段和方法行为见[公开 API](public-api.md)，领域语义见[领域模型](domain-model.md)。
+本指南说明如何在组合根中装配 Memory，并通过 Service 或 Event 调用 Query、Write、Extraction 和 Formation。字段和方法行为见[公开 API](public-api.md)，领域语义见[领域模型](domain-model.md)。
 
 ## 1. 依赖准备
 
@@ -10,6 +10,7 @@ MemoryService 只负责编排，不自行创建 LLM、Retriever 或 Repository�
 Extractor
 Embedder
 Retriever
+MemorySpaceRouter
 Reranker
 Materializer
 Reviewer
@@ -25,6 +26,7 @@ Executor
 - `MemoryChangeExecutor`
 - `SimpleMemoryEmbedder`
 - `SimpleMemoryRetriever`
+- `SimpleMemorySpaceRouter`
 - `SimpleMemoryReranker`
 
 其中三个 Simple 实现只适用于测试或 MVP 验证；项目当前没有正式 Repository Adapter。
@@ -81,7 +83,7 @@ from core.memory.executor import MemoryChangeExecutor
 from core.memory.extractor import LLMMemoryExtractor
 from core.memory.materialization import LLMMemoryMaterializer
 from core.memory.reranker import SimpleMemoryReranker
-from core.memory.retriever import SimpleMemoryRetriever
+from core.memory.retriever import SimpleMemoryRetriever, SimpleMemorySpaceRouter
 from core.memory.reviewer import LLMMemoryReviewer
 from core.memory.service import MemoryService
 
@@ -91,7 +93,11 @@ materializer = LLMMemoryMaterializer(llm)
 reviewer = LLMMemoryReviewer(llm)
 
 embedder = SimpleMemoryEmbedder()
-retriever = SimpleMemoryRetriever(initial_items)
+memory_spaces = SimpleMemorySpaceRouter(
+    {
+        "sena-main": SimpleMemoryRetriever(initial_items),
+    }
+)
 reranker = SimpleMemoryReranker()
 
 executor = MemoryChangeExecutor(repository)
@@ -99,7 +105,7 @@ executor = MemoryChangeExecutor(repository)
 memory = MemoryService(
     extractor=extractor,
     embedder=embedder,
-    retriever=retriever,
+    memory_spaces=memory_spaces,
     reranker=reranker,
     materializer=materializer,
     reviewer=reviewer,
@@ -107,11 +113,84 @@ memory = MemoryService(
 )
 ```
 
-`SimpleMemoryRetriever` 在构造时复制一份 `initial_items` 快照，Repository 后续新增数据不会自动进入它。正式运行需要注入连接真实 Data/Vector 层的 Retriever。
+`SimpleMemoryRetriever` 在构造时复制一份 `initial_items` 快照，Repository 后续新增数据不会自动进入它。正式运行需要注入连接真实 Data/Vector 层的 `MemorySpaceRouter` 和 Retriever。
 
-## 4. 调用 Extraction
+## 4. 安装 Event 入口
 
-Context 层负责提供 summary 和 recent messages：
+如果通过 EventBus 跨模块调用 Memory，组合根需要安装 `MemoryModule`：
+
+```python
+from core.event import ModuleEventAPI
+from core.memory.events import MemoryModule
+
+
+MemoryModule(memory).register(ModuleEventAPI(bus, "memory"))
+```
+
+安装后，Memory 拥有以下事件：
+
+```text
+memory.query.requested
+memory.query.completed
+memory.query.failed
+memory.write.requested
+memory.write.completed
+memory.write.failed
+```
+
+Event Handler 只做边界适配，实际业务仍进入 `MemoryService.query()` 或 `MemoryService.write()`。
+
+## 5. 调用 Write
+
+多数跨模块写入应优先调用 `write()`，由 Memory 内部串联 Extraction 和 Formation：
+
+```python
+from datetime import datetime, timezone
+
+from core.memory.contracts import MemoryWriteMessage, MemoryWriteRequest
+
+
+result = await memory.write(
+    MemoryWriteRequest(
+        operation_id="operation-001",
+        memory_space_id="sena-main",
+        user_id="user-001",
+        session_id="session-001",
+        group_id="group-001",
+        messages=(
+            MemoryWriteMessage(
+                message_id="message-001",
+                role="user",
+                content="我最近搬到上海了",
+            ),
+            MemoryWriteMessage(
+                message_id="message-002",
+                role="assistant",
+                content="以后可以探索上海周边。",
+            ),
+        ),
+        recent_messages=(),
+        summary=context_summary,
+        source_event_id="event-001",
+        recorded_at=datetime.now(timezone.utc),
+    )
+)
+```
+
+也可以发布事件：
+
+```python
+await event_client.publish(
+    "memory.write.requested",
+    request,
+)
+```
+
+调用方通过订阅 `memory.write.completed` 或 `memory.write.failed` 获取结果。不要等待 `publish()` 返回业务结果；EventBus 的发布是异步事件投递。
+
+## 6. 单独调用 Extraction
+
+当需要单独验证候选提取时，可以直接调用 `extract()`。Context 层负责提供 summary 和 recent messages：
 
 ```python
 from core.memory.models import (
@@ -152,7 +231,7 @@ candidates = await memory.extract(
 - 返回空列表是正常结果；
 - Candidate 尚未成为正式 MemoryItem。
 
-## 5. 调用 Formation
+## 7. 单独调用 Formation
 
 调用方需要把记录时间、Recall Context 和新记忆归属显式传入。可信来源已由 Candidate 携带：
 
@@ -201,7 +280,7 @@ scopes
 
 `operation_id` 当前不会自动提供重试幂等。调用方可以提供稳定标识用于来源追踪，但不能据此假设重复调用不会产生副作用。
 
-## 6. 调用 Recall
+## 8. 调用 Recall
 
 ```python
 from core.memory.contracts import MemoryQueryRequest
@@ -210,6 +289,7 @@ from core.memory.contracts import MemoryQueryRequest
 result = await memory.query(
     MemoryQueryRequest(
         query_id="query-001",
+        memory_space_id="sena-main",
         user_id="user-001",
         session_id="session-001",
         group_id="group-001",
@@ -223,6 +303,17 @@ for item in result.memories:
 
 Service 会构造 USER、SESSION、GROUP 三个 Recall Scope，并依次执行 embedding、retrieval 和 rerank。
 
+也可以发布事件：
+
+```python
+await event_client.publish(
+    "memory.query.requested",
+    request,
+)
+```
+
+调用方通过订阅 `memory.query.completed` 或 `memory.query.failed` 获取结果。
+
 返回 MemoryItem 只表示它可以成为当前 Agent 请求的认知输入，不表示：
 
 - Agent 必须发言；
@@ -230,7 +321,7 @@ Service 会构造 USER、SESSION、GROUP 三个 Recall Scope，并依次执行 e
 - 已经通过敏感信息披露检查；
 - Character 必须采用某种表达方式。
 
-## 7. LLM 输出与异常
+## 9. LLM 输出与异常
 
 Extractor、Materializer 和 Reviewer 当前要求 LLM 返回严格 JSON。接入的 LLM Adapter 应返回原始文本，不要在 Adapter 内静默修正领域结果。
 
@@ -240,10 +331,12 @@ Extractor、Materializer 和 Reviewer 当前要求 LLM 返回严格 JSON。接�
 - `ValueError`：模型字段、领域关系或 ChangePlan 不合法；
 - Retriever、LLM、Repository Adapter 自身抛出的异常。
 
-MemoryService 当前不提供统一重试、错误码或补偿。重试有持久化副作用的 Formation 前，必须先明确 operation 幂等策略。
+MemoryService 当前不提供统一重试、错误码或补偿。Event Handler 会把异常转换为 failed 事件，但不执行自动补偿。重试有持久化副作用的 Write 或 Formation 前，必须先明确 operation 幂等策略。
 
-## 8. 接入检查
+## 10. 接入检查
 
+- [ ] 组合根注入 `memory_spaces`，而不是旧式单个 retriever；
+- [ ] 跨模块调用优先走 Event 或 `MemoryWriteRequest` / `MemoryQueryRequest`；
 - [ ] Context 层提供 summary/recent，Memory 不负责生成；
 - [ ] Extraction 只把 new messages 当作新记忆来源；
 - [ ] 每个 Candidate 单独进入 Formation；

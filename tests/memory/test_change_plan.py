@@ -8,7 +8,6 @@ from core.memory.change_plan import (
     MemoryChangePlan,
     NoMemoryChange,
     SupersedeMemoryItem,
-    validate_memory_change_plan,
 )
 from core.memory.models import (
     Experience,
@@ -99,7 +98,7 @@ def test_no_change_accepts_a_non_blank_reason():
         operations=(NoMemoryChange(reason="已有记忆覆盖"),)
     )
 
-    validate_memory_change_plan(plan, ())
+    plan.validate_against(())
 
 
 def test_no_change_rejects_blank_reason():
@@ -144,7 +143,7 @@ def test_fact_can_end_and_add_a_replacement_fact():
         )
     )
 
-    validate_memory_change_plan(plan, (old_fact,))
+    plan.validate_against((old_fact,))
 
 
 def test_targeted_operation_requires_related_item():
@@ -153,7 +152,7 @@ def test_targeted_operation_requires_related_item():
     )
 
     with pytest.raises(ValueError, match="must reference a related item"):
-        validate_memory_change_plan(plan, ())
+        plan.validate_against(())
 
 
 def test_end_fact_validity_rejects_non_fact_target():
@@ -165,7 +164,7 @@ def test_end_fact_validity_rejects_non_fact_target():
     )
 
     with pytest.raises(ValueError, match="target must be a Fact"):
-        validate_memory_change_plan(plan, (experience,))
+        plan.validate_against((experience,))
 
 
 def test_end_fact_validity_rejects_time_before_valid_from():
@@ -183,7 +182,7 @@ def test_end_fact_validity_rejects_time_before_valid_from():
     )
 
     with pytest.raises(ValueError, match="must not precede"):
-        validate_memory_change_plan(plan, (fact,))
+        plan.validate_against((fact,))
 
 
 @pytest.mark.parametrize(
@@ -210,7 +209,7 @@ def test_understanding_and_knowledge_can_be_superseded(
         )
     )
 
-    validate_memory_change_plan(plan, (target,))
+    plan.validate_against((target,))
 
 
 def test_experience_cannot_be_superseded():
@@ -228,7 +227,7 @@ def test_experience_cannot_be_superseded():
         ValueError,
         match="target must be an Understanding or Knowledge",
     ):
-        validate_memory_change_plan(plan, (target,))
+        plan.validate_against((target,))
 
 
 def test_supersede_requires_same_domain():
@@ -243,7 +242,7 @@ def test_supersede_requires_same_domain():
     )
 
     with pytest.raises(ValueError, match="same domain"):
-        validate_memory_change_plan(plan, (target,))
+        plan.validate_against((target,))
 
 
 def test_change_plan_rejects_duplicate_target_operations():
