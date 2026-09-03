@@ -147,7 +147,11 @@ Event Handler 只做边界适配，实际业务仍进入 `MemoryService.query()`
 ```python
 from datetime import datetime, timezone
 
-from core.memory.contracts import MemoryWriteMessage, MemoryWriteRequest
+from core.memory.contracts import (
+    MemoryWriteMessage,
+    MemoryWriteRequest,
+    MemoryWriteSummary,
+)
 
 
 result = await memory.write(
@@ -170,7 +174,15 @@ result = await memory.write(
             ),
         ),
         recent_messages=(),
-        summary=context_summary,
+        summaries=(
+            MemoryWriteSummary(
+                summary_id="summary-001",
+                level=1,
+                first_sequence=1,
+                last_sequence=24,
+                text="用户最近在讨论搬家和城市探索。",
+            ),
+        ),
         source_event_id="event-001",
         recorded_at=datetime.now(timezone.utc),
     )

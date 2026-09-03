@@ -78,6 +78,31 @@ class MemoryWriteMessage:
 
 
 @dataclass(frozen=True)
+class MemoryWriteSummary:
+    """
+    Memory 写入事件中的公开摘要结构。
+
+    形状对齐 Context 的多级 Summary，但不直接依赖 Context 模块实现。
+    """
+
+    summary_id: str
+    level: int
+    first_sequence: int
+    last_sequence: int
+    text: str
+
+    def __post_init__(self) -> None:
+        if not self.summary_id.strip():
+            raise ValueError("summary_id must not be blank")
+        if self.level < 1:
+            raise ValueError("summary level must be positive")
+        if self.first_sequence < 1 or self.last_sequence < self.first_sequence:
+            raise ValueError("summary sequence range is invalid")
+        if not self.text.strip():
+            raise ValueError("summary text must not be blank")
+
+
+@dataclass(frozen=True)
 class MemoryWriteRequest:
     """
     触发一次完整 Memory 写入流程的公开请求。
@@ -104,7 +129,8 @@ class MemoryWriteRequest:
 
     # Extraction 可以参考但不能直接作为本轮新记忆来源的上下文。
     recent_messages: tuple[MemoryWriteMessage, ...] = ()
-    summary: str | None = None
+    # 对齐 Context 活动前沿中的多级摘要。
+    summaries: tuple[MemoryWriteSummary, ...] = ()
 
     # 本轮写入来源事件。
     # Memory 内部据此构造 Provenance。

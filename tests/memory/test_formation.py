@@ -3,7 +3,11 @@ from datetime import datetime, timezone
 import pytest
 
 from core.memory.change_plan import AddMemoryItem, MemoryChangePlan
-from core.memory.contracts import MemoryWriteMessage, MemoryWriteRequest
+from core.memory.contracts import (
+    MemoryWriteMessage,
+    MemoryWriteRequest,
+    MemoryWriteSummary,
+)
 from core.memory.executor import (
     MemoryChangeExecutionInput,
     MemoryChangeExecutionResult,
@@ -378,7 +382,22 @@ async def test_write_runs_extraction_then_forms_each_candidate():
             recent_messages=(
                 MemoryWriteMessage("message-000", "user", "之前的消息"),
             ),
-            summary="历史摘要",
+            summaries=(
+                MemoryWriteSummary(
+                    summary_id="summary-002",
+                    level=2,
+                    first_sequence=1,
+                    last_sequence=16,
+                    text="更早的历史摘要",
+                ),
+                MemoryWriteSummary(
+                    summary_id="summary-001",
+                    level=1,
+                    first_sequence=17,
+                    last_sequence=24,
+                    text="较近的历史摘要",
+                ),
+            ),
             source_event_id="event-001",
             recorded_at=RECORDED_AT,
         )
@@ -407,7 +426,12 @@ async def test_write_runs_extraction_then_forms_each_candidate():
     assert [message.message_id for message in extractor.context.recent_messages] == [
         "message-000",
     ]
-    assert extractor.context.summary == "历史摘要"
+    assert extractor.context.summary == (
+        "[level=2 range=1-16]\n"
+        "更早的历史摘要\n\n"
+        "[level=1 range=17-24]\n"
+        "较近的历史摘要"
+    )
     assert len(executor.inputs) == 2
     assert [item.memory_space_id for item in executor.inputs] == [
         "space-001",

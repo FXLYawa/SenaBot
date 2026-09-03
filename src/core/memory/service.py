@@ -10,6 +10,7 @@ from .converters import (
     build_candidate_scopes,
     build_recall_context,
     to_extraction_messages,
+    to_extraction_summary,
     to_provenance,
     to_write_result,
 )
@@ -188,7 +189,7 @@ class MemoryService:
                 messages=to_extraction_messages(request.messages),
                 provenance=to_provenance(request),
             ),
-            summary=request.summary,
+            summary=to_extraction_summary(request.summaries),
             recent_messages=to_extraction_messages(request.recent_messages),
         )
 

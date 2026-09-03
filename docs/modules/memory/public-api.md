@@ -160,11 +160,23 @@ async def write(
 | `group_id` | `str` | 必填 | 当前群聊；私聊可传空字符串 |
 | `messages` | `tuple[MemoryWriteMessage, ...]` | 必填 | 本轮允许作为新记忆来源的消息 |
 | `recent_messages` | `tuple[MemoryWriteMessage, ...]` | `()` | 只供 Extraction 辅助理解的近期消息 |
-| `summary` | `str | None` | `None` | 只供 Extraction 辅助理解的摘要 |
+| `summaries` | `tuple[MemoryWriteSummary, ...]` | `()` | 只供 Extraction 辅助理解的多级摘要 |
 | `source_event_id` | `str` | `""` | 上游事件或 Context Entry 来源 |
 | `recorded_at` | `datetime | None` | `None` | 记录时间；为空时由 Service 使用当前 UTC 时间 |
 
-`messages` 不能为空。`summary` 和 `recent_messages` 不会被当作本轮新记忆来源。
+`messages` 不能为空。`summaries` 和 `recent_messages` 不会被当作本轮新记忆来源。
+
+### `MemoryWriteSummary`
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `summary_id` | `str` | 摘要唯一标识 |
+| `level` | `int` | 摘要层级，1 覆盖原始消息，更高级摘要覆盖下一级摘要 |
+| `first_sequence` | `int` | 覆盖的第一条原始 Context Entry 序号 |
+| `last_sequence` | `int` | 覆盖的最后一条原始 Context Entry 序号 |
+| `text` | `str` | 摘要文本 |
+
+该结构对齐 Context 的多级 Summary 语义，但不直接依赖 Context 模块实现。Memory 会把多条 Summary 渲染为 Extraction 当前消费的辅助摘要文本。
 
 ### 执行顺序
 

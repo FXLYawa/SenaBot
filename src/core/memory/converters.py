@@ -6,6 +6,7 @@ from core.memory.contracts import (
     MemoryWriteMessage,
     MemoryWriteRequest,
     MemoryWriteResult,
+    MemoryWriteSummary,
 )
 from core.memory.executor import MemoryChangeExecutionResult
 from core.memory.models import (
@@ -40,6 +41,30 @@ def to_provenance(request: MemoryWriteRequest) -> tuple[Provenance, ...]:
             source_type="event",
             source_id=request.source_event_id,
         ),
+    )
+
+
+def to_extraction_summary(
+    summaries: tuple[MemoryWriteSummary, ...],
+) -> str | None:
+    """把多级公开摘要渲染为 Extraction 当前消费的摘要文本。"""
+
+    if not summaries:
+        return None
+
+    ordered = sorted(
+        summaries,
+        key=lambda summary: (
+            summary.first_sequence,
+            summary.level,
+            summary.last_sequence,
+        ),
+    )
+    return "\n\n".join(
+        f"[level={summary.level} "
+        f"range={summary.first_sequence}-{summary.last_sequence}]\n"
+        f"{summary.text}"
+        for summary in ordered
     )
 
 
