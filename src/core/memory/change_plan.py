@@ -176,5 +176,3 @@ class MemoryChangePlan:
 
             operation.validate_target(target)
 
-
-

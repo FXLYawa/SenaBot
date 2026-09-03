@@ -3,6 +3,11 @@ from datetime import datetime, timezone
 import pytest
 
 from core.memory.change_plan import AddMemoryItem, MemoryChangePlan
+from core.memory.contracts import (
+    MemoryWriteMessage,
+    MemoryWriteRequest,
+    MemoryWriteSummary,
+)
 from core.memory.executor import (
     MemoryChangeExecutionInput,
     MemoryChangeExecutionResult,
@@ -148,6 +153,41 @@ class RecordingExecutor:
         return self.result
 
 
+class RecordingExtractor:
+    def __init__(
+        self,
+        calls: list[str],
+        candidates: list[MemoryCandidate],
+    ) -> None:
+        self.calls = calls
+        self.candidates = candidates
+        self.context = None
+
+    async def extract(self, context):
+        self.calls.append("extract")
+        self.context = context
+        return self.candidates
+
+
+class SequentialExecutor:
+    def __init__(
+        self,
+        calls: list[str],
+        results: list[MemoryChangeExecutionResult],
+    ) -> None:
+        self.calls = calls
+        self.results = list(results)
+        self.inputs: list[MemoryChangeExecutionInput] = []
+
+    async def execute(
+        self,
+        input_data: MemoryChangeExecutionInput,
+    ) -> MemoryChangeExecutionResult:
+        self.calls.append("execute")
+        self.inputs.append(input_data)
+        return self.results.pop(0)
+
+
 @pytest.mark.asyncio
 async def test_formation_runs_complete_pipeline_with_shared_snapshot():
     calls: list[str] = []
@@ -271,6 +311,140 @@ async def test_formation_supports_no_related_items():
     assert reviewer.input_data.related_items == ()
     assert executor.input_data is not None
     assert executor.input_data.related_items == ()
+
+
+@pytest.mark.asyncio
+async def test_write_runs_extraction_then_forms_each_candidate():
+    calls: list[str] = []
+    first_candidate = MemoryCandidate(
+        candidate_id="candidate-001",
+        content="用户喜欢咖啡",
+        provenance=PROVENANCE,
+        source_message_ids=("message-001",),
+    )
+    second_candidate = MemoryCandidate(
+        candidate_id="candidate-002",
+        content="用户讨厌熬夜",
+        provenance=PROVENANCE,
+        source_message_ids=("message-002",),
+    )
+    first_item = MemoryItem(
+        item_id="memory-001",
+        memory_space_id="space-001",
+        scopes=SCOPES,
+        payload=create_fact("用户喜欢咖啡"),
+    )
+    second_item = MemoryItem(
+        item_id="memory-002",
+        memory_space_id="space-001",
+        scopes=SCOPES,
+        payload=create_fact("用户讨厌熬夜"),
+    )
+    extractor = RecordingExtractor(calls, [first_candidate, second_candidate])
+    materializer = RecordingMaterializer(calls, create_fact("用户喜欢咖啡"))
+    reviewer = RecordingReviewer(
+        calls,
+        MemoryChangePlan(
+            operations=(AddMemoryItem(payload=create_fact("用户喜欢咖啡")),)
+        ),
+    )
+    executor = SequentialExecutor(
+        calls,
+        [
+            MemoryChangeExecutionResult(added_items=(first_item,)),
+            MemoryChangeExecutionResult(added_items=(second_item,)),
+        ],
+    )
+    service = MemoryService(
+        extractor=extractor,
+        embedder=RecordingEmbedder(calls),
+        memory_spaces=RecordingMemorySpaceRouter(
+            calls,
+            RecordingRetriever(calls, []),
+        ),
+        reranker=object(),
+        materializer=materializer,
+        reviewer=reviewer,
+        executor=executor,
+    )
+
+    result = await service.write(
+        MemoryWriteRequest(
+            operation_id="operation-001",
+            memory_space_id="space-001",
+            user_id="user-001",
+            session_id="session-001",
+            group_id="group-001",
+            messages=(
+                MemoryWriteMessage("message-001", "user", "用户喜欢咖啡"),
+                MemoryWriteMessage("message-002", "assistant", "我记住了"),
+            ),
+            recent_messages=(
+                MemoryWriteMessage("message-000", "user", "之前的消息"),
+            ),
+            summaries=(
+                MemoryWriteSummary(
+                    summary_id="summary-002",
+                    level=2,
+                    first_sequence=1,
+                    last_sequence=16,
+                    text="更早的历史摘要",
+                ),
+                MemoryWriteSummary(
+                    summary_id="summary-001",
+                    level=1,
+                    first_sequence=17,
+                    last_sequence=24,
+                    text="较近的历史摘要",
+                ),
+            ),
+            source_event_id="event-001",
+            recorded_at=RECORDED_AT,
+        )
+    )
+
+    assert calls == [
+        "extract",
+        "embed",
+        "for_space",
+        "retrieve",
+        "materialize",
+        "review",
+        "execute",
+        "embed",
+        "for_space",
+        "retrieve",
+        "materialize",
+        "review",
+        "execute",
+    ]
+    assert extractor.context is not None
+    assert [message.message_id for message in extractor.context.new_messages] == [
+        "message-001",
+        "message-002",
+    ]
+    assert [message.message_id for message in extractor.context.recent_messages] == [
+        "message-000",
+    ]
+    assert extractor.context.summary == (
+        "[level=2 range=1-16]\n"
+        "更早的历史摘要\n\n"
+        "[level=1 range=17-24]\n"
+        "较近的历史摘要"
+    )
+    assert len(executor.inputs) == 2
+    assert [item.memory_space_id for item in executor.inputs] == [
+        "space-001",
+        "space-001",
+    ]
+    assert [item.operation_id for item in executor.inputs] == [
+        "operation-001",
+        "operation-001",
+    ]
+    assert result.operation_id == "operation-001"
+    assert result.memory_space_id == "space-001"
+    assert result.added_item_ids == ("memory-001", "memory-002")
+    assert result.updated_item_ids == ()
 
 
 @pytest.mark.parametrize(

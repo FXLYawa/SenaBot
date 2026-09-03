@@ -296,7 +296,7 @@ class MemoryExtractionInput:
     对应的最终 Agent 回复
 
     不包含历史摘要和最近历史消息；
-    这些由 Extraction 阶段自行获取并作为辅助上下文。
+    这些由 Extraction 阶段获取并作为辅助上下文。
     """
 
     messages: list[MemoryExtractionMessage]

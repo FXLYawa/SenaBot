@@ -16,6 +16,22 @@ MemoryWriteEnvelope    正式记忆 + 本次 operation_id
 
 这四层不能互换：Candidate 不能直接入库，Payload 不具有正式实体身份，MemoryItem 不携带一次操作的全部上下文，Envelope 也不是长期领域内容。
 
+公开写入入口位于另一条边界：
+
+```text
+MemoryWriteRequest     跨模块写入请求
+        ↓ MemoryService.write()
+MemoryExtractionInput
+        ↓ Extraction
+MemoryCandidate
+        ↓ Formation
+MemoryChangeExecutionResult
+        ↓ converters.to_write_result()
+MemoryWriteResult      跨模块写入结果
+```
+
+`MemoryWriteRequest` 不是 Candidate，也不是 Formation Input。它只描述上游能确定的消息、来源、Memory Space 和当前交互身份。
+
 ## 2. `MemoryCandidate`
 
 ```python
@@ -54,7 +70,7 @@ class MemoryItem:
 | 字段 | 含义 |
 |---|---|
 | `item_id` | 正式记忆唯一标识 |
-| `memory_space_id` | 产生这条记忆的 Memory Space 来源标识，不是筛选空间 |
+| `memory_space_id` | 这条记忆所属的长期 Memory Space |
 | `scopes` | 记忆关于哪些长期主体 |
 | `payload` | 具体领域内容 |
 
@@ -95,6 +111,8 @@ Scope 不表达：
 `MemoryScopeRef` 约束：GLOBAL 的 `scope_id` 必须为 `None`；其他类型的 `scope_id` 必须是非空字符串。
 
 粗粒度 Recall 规则为：GLOBAL Item 始终可进入候选；其他 Item 至少有一个 Scope 与 `MemoryRecallContext.scopes` 相交。语义相关性、敏感度和表达适宜性应在后续阶段处理。
+
+Memory Space 与 Scope 不同。`memory_space_id` 先把查询或写入路由到一片长期记忆空间；Scope 再描述该空间内 MemoryItem 关于哪些长期主体。
 
 ## 5. Provenance 与时间
 
@@ -222,16 +240,22 @@ MemorySupersedeResult(
 
 ## 8. ChangePlan 不变量
 
-`MemoryChangePlan` 至少包含一个操作。执行前必须通过 `validate_memory_change_plan()`：
+`MemoryChangePlan` 至少包含一个操作。Plan 创建时会先校验只依赖自身的结构不变量：
+
+- 同一个 Plan 不能 Add 两次；
+- 同一个 Plan 不能 Supersede 两次；
+- Add 和 Supersede 不能同时出现；
+- NoChange 不能和其他操作共存；
+- 同一个 target 不能被操作两次。
+
+执行前还会通过 `MemoryChangePlan.validate_against(related_items)` 校验引用的旧记忆：
 
 - End/Supersede 的 target 必须来自同一份 `related_items`；
-- 同一 target 在一个 Plan 中不能被操作两次；
 - End 只能指向 Fact；
 - Supersede 只能指向 Understanding 或 Knowledge；
 - Supersede replacement 与 target 必须属于同一领域类型；
-- NoChange 不能与其他操作组合。
 
-Reviewer 还限制同一 Payload 不能被 Add 或 Supersede 多次，也不能把 Supersede 与 Add 组合。
+Reviewer 另外负责依赖当前 Payload 的约束：Fact 只能 Add、EndFactValidity 或 NoChange；Experience 只能 Add 或 NoChange；Understanding 和 Knowledge 才允许 Supersede。
 
 ## 9. Write Envelope 与 operation ID
 
