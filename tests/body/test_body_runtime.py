@@ -9,6 +9,7 @@ from core.body import (
     AdapterOutboundMessage,
     AdapterRegistry,
     BodyInputEventData,
+    BodyModule,
     BodyOutputItemResult,
     BodyOutputRequestData,
     BodyOutputResultEventData,
@@ -18,9 +19,7 @@ from core.body import (
     SceneInfo,
     SceneType,
     UserRole,
-    publish_body_input,
-    register_body_events,
-    subscribe_body_events,
+    create_body_module,
 )
 from core.event import EventBus, EventClient, EventFlow, ModuleEventAPI
 
@@ -284,8 +283,8 @@ class BodyEventIntegrationTests(unittest.IsolatedAsyncioTestCase):
         try:
             runtime, _adapter, _registry = make_runtime()
             events = ModuleEventAPI(bus, "body")
-            register_body_events(events)
-            subscribe_body_events(events, runtime)
+            module = BodyModule(runtime)
+            module.register(events)
             observed: list[BodyInputEventData] = []
 
             async def observer(flow: EventFlow) -> None:
@@ -295,7 +294,7 @@ class BodyEventIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 "body.input.received", observer, handler_id="test.input.observer"
             )
             client = EventClient(bus, "adapter.discord")
-            event = await publish_body_input(client, runtime, make_message())
+            event = await module.publish_input(client, make_message())
             await bus.stop()
             self.assertIsNotNone(event)
             self.assertEqual(observed, [event])
@@ -308,8 +307,8 @@ class BodyEventIntegrationTests(unittest.IsolatedAsyncioTestCase):
         try:
             runtime, adapter, _registry = make_runtime()
             events = ModuleEventAPI(bus, "body")
-            register_body_events(events)
-            subscribe_body_events(events, runtime)
+            module = BodyModule(runtime)
+            module.register(events)
             observed: list[BodyOutputResultEventData] = []
 
             async def observer(flow: EventFlow) -> None:
@@ -320,7 +319,7 @@ class BodyEventIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 "body.output.*", observer, handler_id="test.output.observer"
             )
             client = EventClient(bus, "adapter.discord")
-            event = await publish_body_input(client, runtime, make_message())
+            event = await module.publish_input(client, make_message())
             await events.publish(
                 "body.output.requested",
                 BodyOutputRequestData(
@@ -347,6 +346,68 @@ class BodyEventIntegrationTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await bus.stop()
 
+
+class BodyFactoryTests(unittest.IsolatedAsyncioTestCase):
+    """Body 组合入口应装配 Registry、Runtime 和事件边界。"""
+
+    async def test_factory_wires_adapter_input_and_output(self) -> None:
+        bus = EventBus()
+        module = create_body_module("owner")
+        self.assertIsInstance(module, BodyModule)
+        adapter = FakeAdapter()
+        module.register_adapter(adapter)
+        module.register(ModuleEventAPI(bus, "body"))
+
+        observed: list[BodyInputEventData] = []
+
+        async def observe_input(flow: EventFlow) -> None:
+            observed.append(flow.payload)
+
+        ModuleEventAPI(bus, "test").subscribe(
+            "body.input.received",
+            observe_input,
+            handler_id="test.factory_input",
+        )
+        await bus.start()
+        try:
+            event = await module.publish_input(
+                EventClient(bus, "adapter.discord"),
+                make_message(user_id="owner"),
+            )
+            self.assertIsNotNone(event)
+            await EventClient(bus, "agent").publish(
+                "body.output.requested",
+                BodyOutputRequestData(
+                    output_id="factory-output",
+                    session_id=event.session_id,
+                    content=Content.from_text("hello from factory"),
+                ),
+            )
+            await bus.stop()
+        finally:
+            await bus.stop()
+
+        self.assertEqual(observed, [event])
+        self.assertEqual(len(adapter.sent), 1)
+        self.assertEqual(adapter.sent[0].content.text_value(), "hello from factory")
+
+    async def test_factory_accepts_replacement_registry(self) -> None:
+        registry = AdapterRegistry()
+        adapter = FakeAdapter()
+        registry.register(adapter)
+        module = create_body_module("owner", adapters=registry)
+
+        bus = EventBus()
+        module.register(ModuleEventAPI(bus, "body"))
+        await bus.start()
+        try:
+            event = await module.publish_input(
+                EventClient(bus, "adapter.discord"),
+                make_message(),
+            )
+            self.assertIsNotNone(event)
+        finally:
+            await bus.stop()
 
 if __name__ == "__main__":
     unittest.main()

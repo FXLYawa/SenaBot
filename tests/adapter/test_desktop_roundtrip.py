@@ -12,6 +12,7 @@ from core.body import (
     AdapterInboundMessage,
     AdapterRegistry,
     BodyInputEventData,
+    BodyModule,
     BodyOutputRequestData,
     BodyOutputResultEventData,
     BodyRuntime,
@@ -19,9 +20,6 @@ from core.body import (
     OperationStatus,
     SceneType,
     UserRole,
-    publish_body_input,
-    register_body_events,
-    subscribe_body_events,
 )
 from core.event import EventBus, EventClient, EventFlow, ModuleEventAPI
 
@@ -54,25 +52,21 @@ class DesktopRoundtripTests(unittest.IsolatedAsyncioTestCase):
         bus = EventBus()
         registry = AdapterRegistry()
         runtime = BodyRuntime(owner_user_id="local-owner", adapters=registry)
+        body = BodyModule(runtime)
 
         body_events = ModuleEventAPI(bus, "body")
-        register_body_events(body_events)
-        subscribe_body_events(body_events, runtime)
+        body.register(body_events)
 
         connector = FakeConnector()
         adapter_events = EventClient(bus, "adapter.desktop")
         adapter = DesktopAdapter(
             connector=connector,
             codec=DesktopCodec(),
-            publish_input=functools.partial(
-                publish_body_input,
-                adapter_events,
-                runtime,
-            ),
+            publish_input=functools.partial(body.publish_input, adapter_events),
             owner_user_id="local-owner",
             owner_display_name="Owner",
         )
-        registry.register(adapter)
+        body.register_adapter(adapter)
 
         observed_inputs: list[BodyInputEventData] = []
         observed_outputs: list[BodyOutputResultEventData] = []

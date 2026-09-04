@@ -93,9 +93,8 @@ def create_senabot_app(
     app_config = config or SenaBotConfig()
     event_bus = dependencies.event_bus or EventBus()
 
-    # 2. 装配各个模块，这边data层应该是还有问题的
+    # 2. 装配各个模块
     data_components = create_data_components(dependencies.data_store)
-
     body_module = create_body_module(app_config.owner_user_id)
     context_module = create_context_module(
         dependencies.model_provider,
@@ -125,7 +124,6 @@ def create_senabot_app(
         module.register(ModuleEventAPI(event_bus, owner_id))
 
     # 4. Adapter 获取 Body 输入入口
-
     body_input_publisher = functools.partial(
         body_module.publish_input,
         EventClient(event_bus, "adapter"),
@@ -149,8 +147,6 @@ def create_senabot_app(
             data_components,
         ),
     )
-
-
 
 def _default_adapter_factories(
     config: SenaBotConfig,

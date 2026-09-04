@@ -8,7 +8,7 @@ Body 是平台无关的会话边界：负责平台输入归一化、去重、会
 
 ```mermaid
 flowchart LR
-    Adapter["Adapter\n平台具体"] -->|"AdapterInboundMessage"| Entry["publish_body_input"]
+    Adapter["Adapter\n平台具体"] -->|"AdapterInboundMessage"| Entry["BodyModule.publish_input"]
     Entry -->|"过滤 / 去重"| RT["BodyRuntime"]
     RT -->|"绑定会话"| Pub["publish body.input.received"]
     Pub -->|"BodyInputEventData（session_id）"| Bus["EventBus"]
@@ -28,7 +28,7 @@ flowchart LR
 - `AdapterRegistry` / `BodyAdapter` 定义 Adapter 的注册与发送协议；
 - `events.py` 是 Body 到 EventBus 的适配，只调用本模块 Runtime。
 
-运行时调用链是：Adapter 入站 → `publish_body_input` → Runtime 过滤/去重/绑定会话 → 发布 `body.input.received` → Context/Agent 消费 → 发布 `body.output.requested` → `body.output.dispatch` 查会话路由 → Adapter 发送 → 按结果发布完成/失败事件。
+运行时调用链是：Adapter 入站 → `BodyModule.publish_input` → Runtime 过滤/去重/绑定会话 → 发布 `body.input.received` → Context/Agent 消费 → 发布 `body.output.requested` → `BodyModule._handle_output` 查会话路由 → Adapter 发送 → 按结果发布完成/失败事件。
 
 推荐阅读顺序：`common.py`、`contracts.py` → `ports.py` → `runtime.py` → `events.py`。后续章节也按这个顺序解释源码。
 
@@ -42,7 +42,8 @@ Body 只处理"平台输入 → 规范输入"和"规范输出 → 平台发送"�
 | `contracts.py` | 公共契约与 Adapter 侧消息、内容与场景模型 |
 | `ports.py` | `BodyAdapter` 协议与 `AdapterRegistry` |
 | `runtime.py` | 过滤、去重、会话绑定、输出路由、幂等与错误映射 |
-| `events.py` | EventBus 接入：注册、订阅和入站发布入口 |
+| `events.py` | `BodyModule` 与 EventBus 接入：注册、订阅和入站发布入口 |
+| `factory.py` | 创建 `AdapterRegistry`、`BodyRuntime` 并返回完整 `BodyModule` |
 | `__init__.py` | `core.body` 的公开导出 |
 
 必须保持的不变量：
@@ -118,9 +119,9 @@ last_input_message_id   最近一条入站消息的平台 ID，作为默认回�
 
 接线方式：
 
-- `register_body_events(events)` 声明 Body 拥有的事件与 Payload 类型；
-- `subscribe_body_events(events, runtime)` 注册 `body.output.dispatch`：执行 `runtime.handle_output_request(flow.payload)`，再 `flow.emit(f"body.output.{outcome}", result)`；
-- `publish_body_input(events, runtime, message)` 是入站入口，被过滤时返回 `None`，否则发布输入事件并返回 Payload。
+- `BodyModule.register(events)` 声明 Body 拥有的事件，并订阅 `body.output.requested`；
+- `BodyModule._handle_output(flow)` 执行 `runtime.handle_output_request(flow.payload)`，再发布对应结果事件；
+- `BodyModule.publish_input(events, message)` 是唯一入站入口，被过滤时返回 `None`，否则发布输入事件并返回 Payload。
 
 前置条件：
 
@@ -134,7 +135,7 @@ last_input_message_id   最近一条入站消息的平台 ID，作为默认回�
 
 实现 `BodyAdapter` 协议（`adapter_type`、`platform`、`async send(outbound)`）并注册到 `AdapterRegistry`；同一 `(adapter_type, platform)` 重复注册以最后一次为准，运行期不提供动态更换入口。
 
-入站：Adapter 构造 `AdapterInboundMessage`（`user_id` 必须是已解析的规范身份），调用 `publish_body_input`。
+入站：Adapter 构造 `AdapterInboundMessage`（`user_id` 必须是已解析的规范身份），调用组合根注入的 `BodyModule.publish_input`。
 
 出站：`send(outbound)` 接收平台具体的 `AdapterOutboundMessage`，返回 `list[BodyOutputItemResult]`；异常由 BodyRuntime 映射为稳定失败结果。
 
@@ -142,18 +143,14 @@ last_input_message_id   最近一条入站消息的平台 ID，作为默认回�
 
 ```python
 bus = EventBus()
+body = create_body_module(owner_user_id="owner")
+body.register(ModuleEventAPI(bus, "body"))
+body.register_adapter(DiscordAdapter())
+
 await bus.start()
 
-registry = AdapterRegistry()
-registry.register(DiscordAdapter())
-
-runtime = BodyRuntime(owner_user_id="owner", adapters=registry)
-events = ModuleEventAPI(bus, "body")
-register_body_events(events)
-subscribe_body_events(events, runtime)
-
-# Adapter 入站入口（由具体 Adapter 侧调用）
-await publish_body_input(adapter_client, runtime, inbound_message)
+# Adapter 入站入口由组合根绑定给具体 Adapter。
+await body.publish_input(adapter_client, inbound_message)
 ```
 
 ## 8. 修改指引
