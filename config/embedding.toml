@@ -1,0 +1,6 @@
+# 复用 config.load_model_config()；替换为实际支持 Embeddings API 的服务。
+provider = "openai_compatible"
+base_url = "https://embedding.example.com/v1"
+model = "your-embedding-model"
+api_key_env = "SENABOT_EMBEDDING_API_KEY"
+timeout_seconds = 30.0
