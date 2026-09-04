@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
-from enum import StrEnum
 from typing import Any
 
 from core.agent.common import SceneInfo, Content
@@ -16,79 +14,6 @@ class BodyRouteInfo:
     adapter_type: str  # Adapter 实现类型，如 desktop、qq 或 telegram。
     platform: str  # AdapterRegistry 使用的平台命名空间。
     body_id: str  # 可跨重启解析的逻辑收发端点 ID，不参与 Session 划分。
-    
-
-class MemoryType(StrEnum):
-    PREFERENCE = "preference"
-    FACT = "fact"
-    RELATIONSHIP = "relationship"
-    EXPERIENCE = "experience"
-    TASK = "task"
-    PERSONA = "persona"
-
-
-class MemoryStatus(StrEnum):
-    ACTIVE = "active"
-    INACTIVE = "inactive"
-    SUPERSEDED = "superseded"
-
-
-class MemoryScopeType(StrEnum):
-    PRIVATE = "private"
-    SESSION = "session"
-    GROUP = "group"
-    PROJECT = "project"
-    GLOBAL_PERSONA = "global_persona"
-
-    
-@dataclass(frozen=True, slots=True)
-class MemoryScope:
-    owner_user_id: str  # 有权管理该记忆的系统主体 ID。
-    subject_type: str  # 记忆描述对象的类型，如 user、group 或 persona。
-    subject_id: str  # 记忆描述对象的稳定 ID。
-    scope_type: MemoryScopeType  # 私有、会话、群组、项目或 Persona 范围。
-    session_id: str | None = None  # 会话限定；仅 SESSION 范围通常必填。
-    scene_id: str | None = None  # 群组/频道场景限定。
-    persona_id: str | None = None  # Persona 限定。
-    task_id: str | None = None  # 长期任务限定。
-
-
-class Sensitivity(StrEnum):
-    PUBLIC = "public"
-    PERSONAL = "personal"
-    SENSITIVE = "sensitive"
-
-
-@dataclass(frozen=True, slots=True)
-class MemorySourceRef:
-    source_type: str  # 来源类型，如 context_entry 或 explicit_user_input。
-    source_id: str  # 可追溯的来源记录/事件 ID。
-    occurred_at: datetime  # 来源事实发生时间。
-
-    
-@dataclass(slots=True)
-class MemoryRecord:
-    memory_id: str  # 记忆记录唯一 ID。
-    scope: MemoryScope  # 访问和检索必须满足的业务边界。
-    memory_type: MemoryType  # 偏好、事实、关系、经历、任务或 Persona。
-    status: MemoryStatus  # 当前是否有效或已被替代。
-    text: str  # 归一化、可检索的记忆正文。
-    sensitivity: Sensitivity  # 数据敏感级别。
-    confidence: float  # 事实可信度，约定范围 0.0～1.0。
-    importance: float  # 长期保留和排序权重，约定范围 0.0～1.0。
-    source_refs: list[MemorySourceRef]  # 记忆形成依据。
-    created_at: datetime  # 首次创建时间。
-    updated_at: datetime  # 最近更新或合并时间。
-    expires_at: datetime | None = None  # 可选失效时间。
-    superseded_by_memory_id: str | None = None  # 替代本记录的新记忆 ID。
-    
-    
-@dataclass(slots=True)
-class MemoryMatch:
-    memory: MemoryRecord  # 命中的完整记忆记录。
-    relevance_score: float  # 文本/语义相关度原始分数。
-    final_score: float  # 结合相关度、可信度和重要性的最终排序分数。
-    match_reason: str  # 可解释的命中原因码。
     
 
 # AI的，单纯占位

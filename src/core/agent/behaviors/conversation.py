@@ -15,7 +15,8 @@ from core.agent.persona import PersonaResponder
 from core.agent.state import ConversationState
 from core.agent.common import render_prompt, new_id
 from core.context import ContextEntryType, ContextPreparedEventData, ContextSummary
-from core.memory.contracts import MemoryQueryResult
+from core.memory.contracts import MemoryQueryFailedEventData, MemoryQueryResult
+from core.memory.models import Experience, Fact, Knowledge, MemoryItem, Understanding
 from core.model import ModelMessage
 
 
@@ -36,10 +37,11 @@ class ConversationBehavior:
             return AgentStepResult(current, (self._memory_query(current),))
         # 对记忆查询结果的处理
         if isinstance(observation.payload, MemoryQueryResult):
-            # 申请记忆，并调用模型生成恢复，后续考虑将记忆查询和回复生成分开，避免阻塞
             return await self._reply_with_context(
-                current.with_memories(observation.payload.matches)
+                current.with_memories(observation.payload.memories)
             )
+        if isinstance(observation.payload, MemoryQueryFailedEventData):
+            return await self._reply_with_context(current.with_memories([]))
         return AgentStepResult(
             next_state=current,
             effects=(
@@ -51,13 +53,12 @@ class ConversationBehavior:
         )
 
     def _memory_query(self, state: ConversationState) -> MemoryQueryEffect:
-        # TODO: Memory接口
         return MemoryQueryEffect(
             operation_id=new_id("op_memory_query"),
             query=state.user_text,
             requester=state.prepared.source,
             session_id=state.prepared.session_id,
-            scene_id=state.prepared.scene.scene_id,
+            scene=state.prepared.scene,
             persona_id=self._responder.persona_id,
         )
 
@@ -122,7 +123,7 @@ def _messages(state: ConversationState) -> tuple[ModelMessage, ...]:
                     "core.agent.prompts",
                     "authorized_memories_system.txt",
                     memories="\n".join(
-                        f"- {item.memory.text}" for item in state.memories
+                        f"- {_memory_text(item)}" for item in state.memories
                     ),
                 ),
             )
@@ -147,3 +148,12 @@ def _render_summaries(summaries: tuple[ContextSummary, ...]) -> str:
         f"{summary.text or '[无语义摘要]'}"
         for summary in sorted(summaries, key=lambda item: item.first_sequence)
     )
+
+
+def _memory_text(item: MemoryItem) -> str:
+    payload = item.payload
+    if isinstance(payload, Experience):
+        return payload.summary
+    if isinstance(payload, (Fact, Understanding, Knowledge)):
+        return payload.content
+    raise TypeError(f"Unsupported Memory payload: {type(payload).__name__}")
