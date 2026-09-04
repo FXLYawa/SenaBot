@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Protocol, TypeAlias
 
 from core.agent.others import BodyRouteInfo
 from core.agent.common import SceneInfo, SourceInfo
+from core.context import ContextEntryRecord, ContextSummary
 
 
 """Agent 内部运行模型"""
@@ -79,22 +81,25 @@ class MemoryQueryEffect:
     operation_id: str # 用于把外部结果重新关联到当前 AgentRun
     query: str # 检索内容
     requester: SourceInfo # 请求者信息
-    session_id: str | None # 会话id
-    scene_id: str | None # 场景id
+    session_id: str # 会话id
+    scene: SceneInfo # 当前交互场景
     persona_id: str # 角色id
 
 
 @dataclass(frozen=True, slots=True)
 class MemoryWriteEffect:
-    """希望写入一条记忆到 Memory 层"""
-    # 注释同上
-    operation_id: str 
-    text: str
+    """希望 Memory 从一组 Context 消息中形成长期记忆。"""
+
+    operation_id: str
+    messages: tuple[ContextEntryRecord, ...]
     requester: SourceInfo
-    session_id: str | None
+    session_id: str
     scene: SceneInfo
     persona_id: str
-    source_entry_id: str # 候选内容来自哪条 Context Entry
+    source_event_id: str
+    recent_messages: tuple[ContextEntryRecord, ...] = ()
+    summaries: tuple[ContextSummary, ...] = ()
+    recorded_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

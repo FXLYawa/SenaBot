@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass, fields, is_dataclass, replace
 from datetime import date, datetime, time
 from enum import Enum
@@ -206,6 +206,11 @@ def _require_pure_data(value: object) -> None:
             valid = all(
                 visit(key, seen) and visit(entry, seen) for key, entry in item.items()
             )
+            seen.remove(identity)
+            return valid
+        if isinstance(item, Set):
+            seen.add(identity)
+            valid = all(visit(entry, seen) for entry in item)
             seen.remove(identity)
             return valid
         if isinstance(item, Sequence) and not isinstance(item, (str, bytes, bytearray)):
