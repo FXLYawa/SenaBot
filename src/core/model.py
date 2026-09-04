@@ -53,7 +53,11 @@ class ModelRequest:
     """不包含 Agent、Context 或 Persona 语义的文本生成请求。"""
 
     messages: tuple[ModelMessage, ...]
+
+    # 调整模型使用的思维活跃度
     temperature: float | None = None
+
+    #最大Token使用限制
     max_output_tokens: int | None = None
 
     def __post_init__(self) -> None:
@@ -66,7 +70,7 @@ class ModelRequest:
         if self.temperature is not None and (
             isinstance(self.temperature, bool)
             or not isinstance(self.temperature, (int, float))
-            or not self.temperature >= 0
+            or  self.temperature < 0
         ):
             raise ModelRequestError("model request temperature must be >= 0")
         if self.max_output_tokens is not None and (
@@ -81,6 +85,8 @@ class ModelRequest:
 
 @dataclass(frozen=True, slots=True)
 class ModelUsage:
+
+    """统一记录一次模型调用消耗了多少Token"""
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
@@ -88,9 +94,15 @@ class ModelUsage:
 
 @dataclass(frozen=True, slots=True)
 class ModelResponse:
+
+    """模型的返回结果,可供SenaBot内部消费"""
+
     text: str
+    # 实际相应对应的模型名
     model: str
+    # 停止响应的原因
     finish_reason: str = "stop"
+    # token使用统计,可选
     usage: ModelUsage | None = None
 
 

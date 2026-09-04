@@ -45,6 +45,8 @@ class OpenAICompatibleProvider:
         )
 
     def _build_request(self, request: ModelRequest) -> dict[str, Any]:
+
+        """把SenaBot的统一请求,转换为OpenAI-compatible SDK 需要的参数字典"""
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": [
@@ -59,10 +61,15 @@ class OpenAICompatibleProvider:
         return payload
 
     def _parse_response(self, response: Any) -> ModelResponse:
+
+        """把 OpenAI SDK 的返回对象转成 SenaBot 的 ModelResponse"""
+
+        # OpenAI-compatible SDK会返回多个choice,从对象中拿到choices
         choices = getattr(response, "choices", None)
         if not choices:
             raise ModelResponseError("model response contains no choices")
 
+        #只使用第一个候选
         first_choice = choices[0]
         message = getattr(first_choice, "message", None)
         content = getattr(message, "content", None)
@@ -90,7 +97,10 @@ class OpenAICompatibleProvider:
         )
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
+
+        """发起模型调用"""
         try:
+            # 先调用self._build_request(request)把内部结构转换为SDK参数,然后 self._client.chat.completions.create(...)真正发起请求
             response = await self._client.chat.completions.create(
                 **self._build_request(request)
             )
@@ -111,7 +121,9 @@ class OpenAICompatibleProvider:
         except OpenAIError as exc:
             raise ModelError("model service request failed") from exc
 
+        # 返回经_parse_response转换后的结果
         return self._parse_response(response)
 
     async def close(self) -> None:
+        """关闭客户端"""
         await self._client.close()

@@ -14,6 +14,8 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class ModelConfig:
+    """内部向外界请求模型调用时所需的参数,承载读取并已经校验好的模型配置"""
+    # 模型提供商
     provider: str
     base_url: str
     model: str
@@ -24,6 +26,7 @@ class ModelConfig:
 def load_model_config(path: str | PathLike[str]) -> ModelConfig:
     """读取并校验模型 TOML 配置，同时解析 API Key 环境变量。"""
     try:
+        # 读取TOML文件
         with open(path, "rb") as config_file:
             raw = tomllib.load(config_file)
 
@@ -59,6 +62,7 @@ def load_model_config(path: str | PathLike[str]) -> ModelConfig:
 
 
 def _required_string(config: dict[str, object], field: str) -> str:
+    """功能辅助函数,用来判断字段是否存在,是否为字符串,且不为空值"""
     value = config[field]
     if not isinstance(value, str):
         raise TypeError(f"{field} must be a string")
