@@ -18,6 +18,7 @@ from core.body.events import (
     register_body_events,
     subscribe_body_events,
 )
+from core.body.factory import BodyModuleProtocol, create_body_module
 from core.body.ports import AdapterRegistry, BodyAdapter
 from core.body.runtime import BodyRuntime
 
@@ -27,6 +28,7 @@ __all__ = [
     "AdapterRegistry",
     "BodyAdapter",
     "BodyInputEventData",
+    "BodyModuleProtocol",
     "BodyOutputItemResult",
     "BodyOutputRequestData",
     "BodyOutputResultEventData",
@@ -34,6 +36,7 @@ __all__ = [
     "Content",
     "ContentSegment",
     "ContentType",
+    "create_body_module",
     "ErrorInfo",
     "OperationStatus",
     "publish_body_input",
