@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass
-from uuid import uuid4
-
 from core.body.contracts import (
     AdapterInboundMessage,
     AdapterOutboundMessage,
@@ -13,6 +10,8 @@ from core.body.contracts import (
     BodyOutputItemResult,
     BodyOutputRequestData,
     BodyOutputResultEventData,
+    BodyRouteInfo,
+    ConversationScope,
     ContentType,
     SceneInfo,
     SourceInfo,
@@ -24,26 +23,12 @@ from core.body.ports import AdapterRegistry
 _MAX_TRACKED = 1024
 
 
-@dataclass(slots=True)
-class SessionRoute:
-    """Body 内部维护的会话路由：session_id 到具体平台路由的映射。"""
-
-    adapter_type: str
-    platform: str
-    scene: SceneInfo  # 平台作用域场景；scene_id 在对应 adapter/platform 下唯一
-    last_input_message_id: str | None = None  # 最近一条入站消息的平台消息 ID，作为默认回复目标
-
-
-class SessionNotFoundError(LookupError):
-    """会话路由不存在：session_id 未绑定、已失效或来自未知来源。"""
-
-
 class AdapterNotFoundError(LookupError):
     """会话路由有效，但对应的 Adapter 未注册。"""
 
 
 class BodyRuntime:
-    """负责平台输入归一化、去重、会话绑定与输出 Adapter 路由；不含对话或权限策略。"""
+    """负责平台输入归一化、去重与输出 Adapter 路由；不持有 Session。"""
 
     def __init__(self, owner_user_id: str, adapters: AdapterRegistry) -> None:
         """保存属主配置，并初始化输入去重、会话路由与输出结果缓存。"""
@@ -51,11 +36,6 @@ class BodyRuntime:
         self.adapters = adapters
         # 输入去重键：(adapter_type, platform, message_id) → None；只保留最近 _MAX_TRACKED 条。
         self._seen_input_keys: OrderedDict[tuple[str, str, str], None] = OrderedDict()
-        # 会话路由表：session_id → SessionRoute；进程内保存，持久化后续讨论。
-        self._sessions: dict[str, SessionRoute] = {}
-        # 路由反查键：(adapter_type, platform, scene_type, scene_id) → session_id；
-        # 同一会话的后续消息复用同一个 session_id。
-        self._session_ids: dict[tuple[str, str, str, str], str] = {}
         # 输出结果缓存：output_id → 最近一次发送结果，用于幂等返回；只保留最近 _MAX_TRACKED 条。
         self._output_result_cache: OrderedDict[str, BodyOutputResultEventData] = OrderedDict()
 
@@ -75,14 +55,6 @@ class BodyRuntime:
         self._mark_seen(input_key)
         return self._normalize(message)
 
-    async def open_session(
-        self, adapter_type: str, platform: str, scene: SceneInfo
-    ) -> str:
-        """显式创建（或复用）会话路由，返回不透明 session_id；用于主动发送等无输入消息的场景。"""
-        # 提前校验 adapter 已注册，避免创建出无法路由的会话。
-        self.adapters.get(adapter_type, platform)
-        return self._ensure_session(adapter_type, platform, scene)
-
     async def handle_output_request(
         self, request: BodyOutputRequestData
     ) -> BodyOutputResultEventData:
@@ -100,14 +72,6 @@ class BodyRuntime:
                 output_id=request.output_id,
                 items=[],
                 error=ErrorInfo("adapter_not_found", str(exc)),
-            )
-            self._cache_output(request.output_id, result)
-            return result
-        except SessionNotFoundError as exc:
-            result = BodyOutputResultEventData(
-                output_id=request.output_id,
-                items=[],
-                error=ErrorInfo("session_not_found", str(exc)),
             )
             self._cache_output(request.output_id, result)
             return result
@@ -132,54 +96,31 @@ class BodyRuntime:
         return result
 
     def _normalize(self, message: AdapterInboundMessage) -> BodyInputEventData:
-        """把 Adapter 入站消息转换为标准 Body 输入事件数据，并绑定/更新会话路由。"""
+        """把 Adapter 入站消息转换为不含 Session 的标准 Body 输入。"""
         # 角色只依据可信 Adapter 身份和配置解析，绝不从消息正文推断。
         role = self._resolve_role(message.user_id, message.scene_type.value)
-        session_id = self._bind_session(message)
+        scene = SceneInfo(message.scene_type, message.scene_id)
         return BodyInputEventData(
-            session_id=session_id,
+            conversation_scope=ConversationScope(
+                message.platform,
+                message.scene_type,
+                message.scene_id,
+            ),
             source=SourceInfo(
                 platform_user_id=message.user_id,
                 display_name=message.display_name,
                 principal_id=message.user_id,
                 role=role,
             ),
-            scene=SceneInfo(message.scene_type, message.scene_id),
-            content=message.content,
-        )
-
-    def _bind_session(self, message: AdapterInboundMessage) -> str:
-        """为入站消息绑定会话路由，并把本条消息记为默认回复目标。"""
-        return self._ensure_session(
-            message.adapter_type,
-            message.platform,
-            SceneInfo(message.scene_type, message.scene_id),
-            last_input_message_id=message.message_id,
-        )
-
-    def _ensure_session(
-        self,
-        adapter_type: str,
-        platform: str,
-        scene: SceneInfo,
-        last_input_message_id: str | None = None,
-    ) -> str:
-        """按会话路由键查找或创建会话，返回稳定 session_id。"""
-        route_key = (adapter_type, platform, scene.scene_type.value, scene.scene_id)
-        session_id = self._session_ids.get(route_key)
-        if session_id is not None:
-            if last_input_message_id is not None:
-                self._sessions[session_id].last_input_message_id = last_input_message_id
-            return session_id
-        session_id = uuid4().hex
-        self._session_ids[route_key] = session_id
-        self._sessions[session_id] = SessionRoute(
-            adapter_type=adapter_type,
-            platform=platform,
             scene=scene,
-            last_input_message_id=last_input_message_id,
+            content=message.content,
+            output_route=BodyRouteInfo(
+                message.adapter_type,
+                message.platform,
+                message.scene_id,
+            ),
+            reply_target_id=message.message_id,
         )
-        return session_id
 
     def _resolve_role(self, user_id: str, scene_type: str) -> UserRole:
         """按属主身份与场景类型解析用户角色。"""
@@ -188,21 +129,18 @@ class BodyRuntime:
         return UserRole.GROUP_MEMBER if scene_type == "group" else UserRole.PRIVATE_USER
 
     async def _dispatch(self, request: BodyOutputRequestData) -> list[BodyOutputItemResult]:
-        """按 session_id 解析会话路由并选择 Adapter 发送，返回逐项发送结果。"""
-        route = self._sessions.get(request.session_id)
-        if route is None:
-            raise SessionNotFoundError(f"Body session not found: {request.session_id}")
+        """按请求携带的显式路由选择 Adapter，返回逐项发送结果。"""
         try:
-            adapter = self.adapters.get(route.adapter_type, route.platform)
+            adapter = self.adapters.get(request.route.adapter_type, request.route.platform)
         except LookupError as exc:
             raise AdapterNotFoundError(str(exc)) from exc
         return await adapter.send(
             AdapterOutboundMessage(
-                adapter_type=route.adapter_type,
-                platform=route.platform,
-                scene=route.scene,
+                adapter_type=request.route.adapter_type,
+                platform=request.route.platform,
+                scene=request.scene,
                 content=request.content,
-                reply_to_message_id=route.last_input_message_id,
+                reply_to_message_id=request.reply_to_message_id,
                 metadata=dict(request.metadata),
             )
         )
