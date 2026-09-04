@@ -95,14 +95,13 @@ def create_senabot_app(
 
     # 2. 装配各个模块，这边data层应该是还有问题的
     data_components = create_data_components(dependencies.data_store)
-    # TODO: czy
+
     body_module = create_body_module(app_config.owner_user_id)
     context_module = create_context_module(
         dependencies.model_provider,
         compressor=dependencies.context_compressor,
         enable_compression=app_config.enable_context_compression,
     )
-    # TODO: ljc
     memory_module = create_memory_module(
         dependencies.memory_llm,
         data_components.memory_repository,
@@ -126,7 +125,7 @@ def create_senabot_app(
         module.register(ModuleEventAPI(event_bus, owner_id))
 
     # 4. Adapter 获取 Body 输入入口
-    # TODO: czy
+
     body_input_publisher = functools.partial(
         body_module.publish_input,
         EventClient(event_bus, "adapter"),
@@ -152,7 +151,7 @@ def create_senabot_app(
     )
 
 
-# TODO: czy
+
 def _default_adapter_factories(
     config: SenaBotConfig,
 ) -> tuple[AdapterFactory, ...]:
