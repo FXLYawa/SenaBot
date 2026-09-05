@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from core.common import Summary
 from core.context.compression import (
     CompactionInput,
     CompactionRequestData,
     CompressionItem,
 )
-from core.context.contracts import ContextEntryRecord, ContextSnapshot, ContextSummary
+from core.context.contracts import ContextEntryRecord, ContextSnapshot
 
 
 class ContextWindowPolicy:
@@ -75,7 +76,7 @@ class ContextWindowPolicy:
     def _plan_summary_promotion(self, snapshot: ContextSnapshot) -> CompactionRequestData | None:
         """把达到 fanout 的最早一组同层摘要压缩为更高层摘要"""
         # 获取同层摘要的分组，按 level 升序处理，优先压缩较低层级的摘要
-        summaries_by_level: dict[int, list[ContextSummary]] = {}
+        summaries_by_level: dict[int, list[Summary]] = {}
         for summary in snapshot.summaries:
             summaries_by_level.setdefault(summary.level, []).append(summary)
         
@@ -122,7 +123,7 @@ def _entry_item(entry: ContextEntryRecord) -> CompressionItem:
     )
 
 
-def _summary_item(summary: ContextSummary) -> CompressionItem:
+def _summary_item(summary: Summary) -> CompressionItem:
     """把摘要节点转换为 Compressor 使用的统一文本块"""
 
     return CompressionItem(
@@ -134,7 +135,7 @@ def _summary_item(summary: ContextSummary) -> CompressionItem:
 
 
 def _preceding_summary(
-    summaries: tuple[ContextSummary, ...],
+    summaries: tuple[Summary, ...],
     first_sequence: int,
 ) -> tuple[CompressionItem, ...]:
     """选择目标区间前最近的一个有语义摘要, 只作为理解参考"""
@@ -146,7 +147,7 @@ def _preceding_summary(
 
 
 def _following_summary(
-    summaries: tuple[ContextSummary, ...],
+    summaries: tuple[Summary, ...],
     last_sequence: int,
 ) -> tuple[CompressionItem, ...]:
     """选择目标区间后最近的一个有语义摘要, 只作为理解参考"""

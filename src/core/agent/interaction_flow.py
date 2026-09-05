@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from core.common import new_id
 from core.agent.contracts import (
     CONVERSATION_BEHAVIOR,
     AgentInteractionIgnoredEventData,
@@ -9,7 +10,6 @@ from core.agent.contracts import (
 )
 from core.agent.interaction import InteractionPolicy
 from core.agent.state import ConversationState
-from core.agent.common import new_id
 from core.context import ContextEntryRecord, ContextPreparedEventData
 from core.event import EventFlow
 

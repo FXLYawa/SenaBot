@@ -1,3 +1,4 @@
+from core.body.common import ErrorInfo, OperationStatus
 from core.body.contracts import (
     AdapterInboundMessage,
     AdapterOutboundMessage,
@@ -5,16 +6,7 @@ from core.body.contracts import (
     BodyOutputItemResult,
     BodyOutputRequestData,
     BodyOutputResultEventData,
-    BodyRouteInfo,
-    ConversationScope,
-    Content,
-    ContentSegment,
-    ContentType,
-    SceneInfo,
-    SceneType,
-    SourceInfo,
 )
-from core.body.common import ErrorInfo, OperationStatus, UserRole
 from core.body.events import (
     publish_body_input,
     register_body_events,
@@ -33,18 +25,9 @@ __all__ = [
     "BodyOutputRequestData",
     "BodyOutputResultEventData",
     "BodyRuntime",
-    "BodyRouteInfo",
-    "ConversationScope",
-    "Content",
-    "ContentSegment",
-    "ContentType",
     "ErrorInfo",
     "OperationStatus",
     "publish_body_input",
     "register_body_events",
-    "SceneInfo",
-    "SceneType",
-    "SourceInfo",
     "subscribe_body_events",
-    "UserRole",
 ]

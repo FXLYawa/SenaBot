@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from core.agent.common import render_prompt
 from core.agent.contracts import (
     AgentObservation,
     AgentObservationType,
@@ -13,8 +14,8 @@ from core.agent.contracts import (
 )
 from core.agent.persona import PersonaResponder
 from core.agent.state import ConversationState
-from core.agent.common import render_prompt, new_id
-from core.context import ContextEntryType, ContextPreparedEventData, ContextSummary
+from core.common import Summary, new_id
+from core.context import ContextEntryType, ContextPreparedEventData
 from core.memory.contracts import MemoryQueryFailedEventData, MemoryQueryResult
 from core.memory.models import Experience, Fact, Knowledge, MemoryItem, Understanding
 from core.model import ModelMessage
@@ -139,7 +140,7 @@ def _messages(state: ConversationState) -> tuple[ModelMessage, ...]:
     return tuple(messages)
 
 
-def _render_summaries(summaries: tuple[ContextSummary, ...]) -> str:
+def _render_summaries(summaries: tuple[Summary, ...]) -> str:
     """按顺序渲染 Context 已提供的摘要，不主动读取更早的原始历史。"""
 
     return "\n\n".join(

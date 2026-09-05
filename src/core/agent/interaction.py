@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.agent.common import SceneType
+from core.common import SceneType
 from core.context import ContextPreparedEventData
 
 

@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from core.context.common import new_id, utc_now
+from core.common import Summary, new_id, utc_now
 from core.context.compression import CompactionRequestData
 from core.context.contracts import (
     ContextEntryDraft,
     ContextEntryRecord,
     ContextSnapshot,
-    ContextSummary,
     SessionRecord,
 )
 
@@ -28,7 +27,7 @@ class CompactionResult:
     """一次成功完成的摘要压缩的状态与新节点"""
 
     snapshot: ContextSnapshot # 提交压缩后的完整 Context 快照
-    summary: ContextSummary # 本次新增的摘要节点
+    summary: Summary # 本次新增的摘要节点
     
     
 @dataclass(slots=True)
@@ -38,7 +37,7 @@ class SessionState:
     session: SessionRecord
     latest_sequence: int
     entries: list[ContextEntryRecord]
-    summaries: list[ContextSummary]
+    summaries: list[Summary]
 
     @classmethod
     def from_snapshot(cls, snapshot: ContextSnapshot) -> SessionState:
@@ -93,7 +92,7 @@ class SessionState:
         first_sequence, last_sequence = covered_range
 
         now = utc_now()
-        summary = ContextSummary(
+        summary = Summary(
             summary_id=new_id("summary"),
             session_id=self.session.session_id,
             level=target_level,

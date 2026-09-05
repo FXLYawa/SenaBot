@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from core.common import Summary
 from core.memory.contracts import (
     MemoryWriteMessage,
     MemoryWriteRequest,
     MemoryWriteResult,
-    MemoryWriteSummary,
 )
 from core.memory.executor import MemoryChangeExecutionResult
 from core.memory.models import (
@@ -21,13 +21,13 @@ from core.memory.models import (
 def to_extraction_messages(
     messages: tuple[MemoryWriteMessage, ...],
 ) -> list[MemoryExtractionMessage]:
-    """把公开写入消息转换为 Extraction 内部消息。"""
+    """投影为提取器使用的文本消息；无文本表示时由内部契约拒绝。"""
 
     return [
         MemoryExtractionMessage(
             message_id=message.message_id,
             role=message.role,
-            content=message.content,
+            content=message.content.text_value(),
         )
         for message in messages
     ]
@@ -45,15 +45,17 @@ def to_provenance(request: MemoryWriteRequest) -> tuple[Provenance, ...]:
 
 
 def to_extraction_summary(
-    summaries: tuple[MemoryWriteSummary, ...],
+    summaries: tuple[Summary, ...],
 ) -> str | None:
     """把多级公开摘要渲染为 Extraction 当前消费的摘要文本。"""
 
-    if not summaries:
+    # 空文本摘要保留历史展开关系，但不参与语义提取。
+    semantic_summaries = tuple(summary for summary in summaries if summary.text.strip())
+    if not semantic_summaries:
         return None
 
     ordered = sorted(
-        summaries,
+        semantic_summaries,
         key=lambda summary: (
             summary.first_sequence,
             summary.level,

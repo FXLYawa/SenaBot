@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from uuid import UUID, uuid5
 
-from core.context.common import ConversationScope
+from core.common import ConversationScope
 
 
 _SESSION_NAMESPACE = UUID("4ef8a6e5-2f0f-5a2a-b19f-87d62ebc4c2d")

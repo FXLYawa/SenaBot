@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+
+from core.body.common import ErrorInfo, OperationStatus
 from core.body.contracts import (
     AdapterInboundMessage,
     AdapterOutboundMessage,
@@ -10,14 +12,16 @@ from core.body.contracts import (
     BodyOutputItemResult,
     BodyOutputRequestData,
     BodyOutputResultEventData,
-    BodyRouteInfo,
-    ConversationScope,
+)
+from core.body.ports import AdapterRegistry
+from core.common import (
     ContentType,
+    ConversationScope,
+    OutputRoute,
     SceneInfo,
     SourceInfo,
+    UserRole,
 )
-from core.body.common import ErrorInfo, OperationStatus, UserRole
-from core.body.ports import AdapterRegistry
 
 # 只保留最近 N 条去重/幂等记录，避免长期运行后缓存无限增长。
 _MAX_TRACKED = 1024
@@ -114,7 +118,7 @@ class BodyRuntime:
             ),
             scene=scene,
             content=message.content,
-            output_route=BodyRouteInfo(
+            output_route=OutputRoute(
                 message.adapter_type,
                 message.platform,
                 message.scene_id,

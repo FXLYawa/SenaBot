@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core.context.common import utc_now, ConversationScope
+from core.common import ConversationScope, utc_now
 from core.context.compression import CompactionRequestData
 from core.context.contracts import (
     ContextEntryDraft,

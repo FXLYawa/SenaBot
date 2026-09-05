@@ -3,19 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from core.agent.common import SceneInfo, Content
+from core.common import Content, OutputRoute, SceneInfo
 
     
     
-@dataclass(frozen=True, slots=True)
-class BodyRouteInfo:
-    """可持久化的输出 Adapter 定位，不包含平台凭证或 SDK 对象。"""
-
-    adapter_type: str  # Adapter 实现类型，如 desktop、qq 或 telegram。
-    platform: str  # AdapterRegistry 使用的平台命名空间。
-    body_id: str  # 可跨重启解析的逻辑收发端点 ID，不参与 Session 划分。
-    
-
 # AI的，单纯占位
 @dataclass(slots=True)
 class PersonaConfig:
@@ -43,7 +34,7 @@ class BodyOutputOptions:
 @dataclass(slots=True)
 class BodyOutputRequestData:
     output_id: str  # 一次逻辑输出的唯一 ID，用于关联分片结果。
-    route: BodyRouteInfo  # 选择输出 Adapter 的显式路由。
+    route: OutputRoute  # 选择输出 Adapter 的显式路由。
     scene: SceneInfo  # 输出目标场景。
     content: Content  # 待发送的归一化内容。
     reply_to: OutputReplyInfo | None = None  # 可选回复/引用目标。

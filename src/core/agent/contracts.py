@@ -7,9 +7,13 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Protocol, TypeAlias
 
-from core.agent.others import BodyRouteInfo
-from core.agent.common import SceneInfo, SourceInfo
-from core.context import ContextEntryRecord, ContextSummary
+from core.common import (
+    OutputRoute,
+    SceneInfo,
+    SourceInfo,
+    Summary,
+)
+from core.context import ContextEntryRecord
 
 
 """Agent 内部运行模型"""
@@ -69,7 +73,7 @@ class ReplyEffect:
     text: str # 回复文本
     session_id: str # 回复的会话id
     trigger_event_id: str # 触发本次回复的事件id
-    output_route: BodyRouteInfo # 回复的输出路由
+    output_route: OutputRoute # 回复的输出路由
     scene: SceneInfo # 当前的交互场景
     reply_to_message_id: str | None = None  # 是否要引用某条消息进行回复
 
@@ -98,7 +102,7 @@ class MemoryWriteEffect:
     persona_id: str
     source_event_id: str
     recent_messages: tuple[ContextEntryRecord, ...] = ()
-    summaries: tuple[ContextSummary, ...] = ()
+    summaries: tuple[Summary, ...] = ()
     recorded_at: datetime | None = None
 
 
