@@ -1,0 +1,5 @@
+provider = "openai_compatible"
+base_url = "https://api.deepseek.com"
+model = "deepseek-v4-flash"
+api_key_env = ""
+timeout_seconds = 30.0

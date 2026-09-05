@@ -61,6 +61,29 @@ class SceneInfo:
 
 
 @dataclass(frozen=True, slots=True)
+class ConversationScope:
+    """供 Context 解析 Session 的稳定对话范围；本身不是 Session。"""
+
+    platform: str
+    scene_type: SceneType
+    scene_id: str
+    account_namespace: str = "default"
+
+    @property
+    def scene(self) -> SceneInfo:
+        return SceneInfo(self.scene_type, self.scene_id)
+
+
+@dataclass(frozen=True, slots=True)
+class BodyRouteInfo:
+    """Body 输出所需的显式 Adapter 路由，不承载 Session 状态。"""
+
+    adapter_type: str
+    platform: str
+    body_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class ContentSegment:
     """消息内容片段：类型与其对应的结构化数据。"""
 
@@ -125,24 +148,28 @@ class AdapterInboundMessage:
 class BodyInputEventData:
     """发布给 Context/Agent 的标准输入契约；时间与事件元数据由 Envelope 承载。
 
-    公共契约不暴露平台标识，session_id 是唯一寻址句柄。
+    Session 身份由 Context 根据 conversation_scope 解析。
     """
 
-    session_id: str  # Body 内部维护的不透明会话句柄；同一会话的后续消息复用同一 id
+    conversation_scope: ConversationScope
     source: SourceInfo  # 归一化发言者；身份判定请用 source.user_id
     scene: SceneInfo  # 会话场景，仅供语义判断（私聊/群聊/哪个群），不用于寻址
     content: Content
+    output_route: BodyRouteInfo
+    reply_target_id: str | None = None
     payload_type: str = "body"
     body_data_type: str = "input"
 
 
 @dataclass(slots=True)
 class BodyOutputRequestData:
-    """Body 模块的输出请求契约；寻址只依赖 session_id，路由由 Body 内部解析。"""
+    """Body 输出请求；使用显式路由，不通过 Session 寻址。"""
 
     output_id: str  # 输出幂等键：同一 output_id 重复请求直接返回缓存结果
-    session_id: str  # 目标会话句柄，来自 BodyInputEventData 或 BodyRuntime.open_session()
+    route: BodyRouteInfo
+    scene: SceneInfo
     content: Content
+    reply_to_message_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)  # 展示/附加元数据，如 presentation.emotion/state
     payload_type: str = "body"
     body_data_type: str = "output_request"
