@@ -1,4 +1,3 @@
-from core.body.common import ErrorInfo, OperationStatus
 from core.body.contracts import (
     AdapterInboundMessage,
     AdapterOutboundMessage,
@@ -7,11 +6,9 @@ from core.body.contracts import (
     BodyOutputRequestData,
     BodyOutputResultEventData,
 )
-from core.body.events import (
-    publish_body_input,
-    register_body_events,
-    subscribe_body_events,
-)
+from core.body.common import ErrorInfo, OperationStatus
+from core.body.events import BodyModule
+from core.body.factory import create_body_module
 from core.body.ports import AdapterRegistry, BodyAdapter
 from core.body.runtime import BodyRuntime
 
@@ -21,13 +18,12 @@ __all__ = [
     "AdapterRegistry",
     "BodyAdapter",
     "BodyInputEventData",
+    "BodyModule",
     "BodyOutputItemResult",
     "BodyOutputRequestData",
     "BodyOutputResultEventData",
     "BodyRuntime",
     "ErrorInfo",
+    "create_body_module",
     "OperationStatus",
-    "publish_body_input",
-    "register_body_events",
-    "subscribe_body_events",
 ]

@@ -16,6 +16,7 @@ from .models import (
     MemoryPayload,
     MemoryReviewInput,
 )
+from .json_response import parse_json_response
 from .prompts import MEMORY_REVIEW_PROMPT
 from .protocols import MemoryLLMProtocol
 
@@ -124,7 +125,7 @@ class _MemoryReviewResponseParser:
         self._payload = payload
 
     def parse(self, response: str) -> MemoryChangePlan:
-        data = json.loads(response)
+        data = parse_json_response(response)
 
         if not isinstance(data, dict):
             raise ValueError("memory review response must be a JSON object")

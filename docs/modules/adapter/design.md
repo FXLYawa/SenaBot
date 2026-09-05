@@ -6,13 +6,13 @@
 
 ### 1.1 现状
 
-`core` 内三个 MVP 已完成（body / event / memory）。body 已经为 Adapter 固定了最小契约：`BodyAdapter` 协议、`AdapterRegistry`、`AdapterInboundMessage`、`AdapterOutboundMessage`、`publish_body_input`。
+`core` 内三个 MVP 已完成（body / event / memory）。body 已经为 Adapter 固定了最小契约：`BodyAdapter` 协议、`AdapterRegistry`、`AdapterInboundMessage`、`AdapterOutboundMessage`、`BodyModule.publish_input`。
 
 ### 1.2 定位
 
 `src/adapter` 是 core 之外唯一的翻译层，**只与 body 交互**：
 
-- 入站：平台输入 → `AdapterInboundMessage` → `publish_body_input`；
+- 入站：平台输入 → `AdapterInboundMessage` → `BodyModule.publish_input`；
 - 出站：body 路由 → `adapter.send(AdapterOutboundMessage)` → 平台发送 → `list[BodyOutputItemResult]`。
 
 Adapter 不发布任何事件、不持有 EventClient、不接触 `core.event` / `core.memory`。
@@ -38,7 +38,7 @@ flowchart LR
     Connector -->|"raw: str"| Adapter["BaseAdapter\nDesktopAdapter"]
     Adapter -->|"decode(raw)"| Codec["DesktopCodec\nJSON 与 body 契约转换"]
     Codec -->|"内部中间态 AdapterInboundMessage"| Adapter
-    Adapter -->|"补齐归属/可信身份后 publish_input"| Body["core.body\npublish_body_input"]
+    Adapter -->|"补齐归属/可信身份后 publish_input"| Body["core.body\nBodyModule.publish_input"]
     Body -->|"AdapterOutboundMessage"| Adapter
     Adapter -->|"encode(outbound)"| Codec
     Codec -->|"list[str]"| Adapter
@@ -121,7 +121,7 @@ class BaseAdapter(ABC):
 InboundPublisher = Callable[[AdapterInboundMessage], Awaitable[BodyInputEventData | None]]
 ```
 
-组合根把它绑定到 `publish_body_input`（见[第 7 节](#7-组合根装配)）。`BaseAdapter` 不直接导入 body 的 runtime 或 events。
+组合根把它绑定到 `BodyModule.publish_input`（见[第 7 节](#7-组合根装配)）。`BaseAdapter` 不直接导入 body 的 runtime 或 events。
 
 不变式：
 
@@ -202,15 +202,17 @@ Desktop 单连接测试至少验证：第一个连接保持可用；第二个连
 ## 7. 组合根装配
 
 ```python
-registry = AdapterRegistry()
+body = create_body_module(owner_user_id="local-owner")
+body.register(ModuleEventAPI(bus, "body"))
+adapter_events = EventClient(bus, "adapter.desktop")
 adapter = DesktopAdapter(
     connector=WebSocketConnector(host="127.0.0.1", port=8765),
     codec=DesktopCodec(),
-    publish_input=functools.partial(publish_body_input, events, runtime),
+    publish_input=functools.partial(body.publish_input, adapter_events),
     owner_user_id="local-owner",
     owner_display_name="Owner",
 )
-registry.register(adapter)
+body.register_adapter(adapter)
 await adapter.start()
 ```
 
@@ -239,7 +241,7 @@ Adapter 使用 body 现有契约，**不改 `core.body`**：
 | `BodyOutputItemResult` | `send()` 返回真实 wire item 的逐项结果；encode 整体失败没有 wire item，临时用不对应真实发送项的 synthetic `index=0 FAILED` 使 Body outcome 为 FAILED |
 | `SceneType.DESKTOP` | 固定场景 |
 | `AdapterRegistry.register()` | 组合根注册 |
-| `publish_body_input` | 组合根注入为 `publish_input` |
+| `BodyModule.publish_input` | 组合根注入为 `publish_input` |
 
 Adapter 不维护会话历史、持久化、事件分发或记忆，也不为这些模块预设未来职责。MVP 中 body 的会话路由仍按现有实现工作。
 
@@ -270,7 +272,7 @@ Adapter 不维护会话历史、持久化、事件分发或记忆，也不为这
 | 编号 | 决策 | 理由 |
 |---|---|---|
 | ADR-001 | 保留 Connector / Codec / BaseAdapter 三个接缝 | 新平台主要增加传输、编解码和薄配置层，主流程不随平台重复 |
-| ADR-002 | 入站经注入的 `publish_input`，即 `publish_body_input` | Adapter 不依赖 `core.event`，只与 body 交互 |
+| ADR-002 | 入站经注入的 `publish_input`，即 `BodyModule.publish_input` | Adapter 不依赖 `core.event`，只与 body 交互 |
 | ADR-003 | MVP 不发布事件、不维护元数据与统计 | 当前无消费者；触发条件见第 10 节 |
 | ADR-004 | `run()` 代表传输服务；`stop()` 先 close、等待退出、必要时 cancel | 浏览器断开不等于服务停止，同时保持生命周期实现简单 |
 | ADR-005 | 不改 `core.body` | 入站使用现有可变对象作为 Adapter 内部中间态并在发布前强制补齐；encode 整体失败以 synthetic `index=0 FAILED` 临时兼容现有汇总契约，该 index 不对应 wire item，未来契约可表达 adapter-level failure 时应移除 |

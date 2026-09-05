@@ -17,6 +17,7 @@ from core.context.contracts import (
     ContextWorkReadyEventData,
     ContextWorkRequestData,
 )
+from core.context.factory import create_context_module
 
 __all__ = [
     "ContextActorRef",
@@ -34,5 +35,6 @@ __all__ = [
     "ContextWorkReadyEventData",
     "ContextWorkRequestData",
     "ContextCompressor",
+    "create_context_module",
     "LLMCompressor",
 ]
