@@ -3,3 +3,6 @@ websockets>=13
 
 # OpenAI-compatible LLM Provider
 openai>=1.0,<3
+
+# SQLite vector extension (validated on Windows / Python 3.12)
+sqlite-vec==0.1.9
