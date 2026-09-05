@@ -23,6 +23,8 @@ from core.body import (
     SceneType,
 )
 from core.event import EventBus, EventClient
+from core.data import SQLiteDatabase
+from core.embedding import EmbeddingRequest, EmbeddingResponse
 from core.model import ModelRequest, ModelResponse
 
 
@@ -34,6 +36,14 @@ class StubModelProvider:
 class StubMemoryLLM:
     async def generate(self, prompt: str) -> str:
         return "{}"
+
+
+class StubEmbeddingProvider:
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        return EmbeddingResponse((1.0,), "stub")
+
+    async def close(self) -> None:
+        pass
 
 
 class StubModule:
@@ -89,6 +99,8 @@ class BodyBootstrapTests(unittest.IsolatedAsyncioTestCase):
         dependencies = SenaBotDependencies(
             model_provider=StubModelProvider(),
             memory_llm=StubMemoryLLM(),
+            embedding_provider=StubEmbeddingProvider(),
+            database=SQLiteDatabase(":memory:"),
             event_bus=bus,
             adapter_factories=(create_adapter,),
         )
@@ -134,8 +146,10 @@ class BodyBootstrapTests(unittest.IsolatedAsyncioTestCase):
                 "body.output.requested",
                 BodyOutputRequestData(
                     output_id="output-1",
-                    session_id=inbound.session_id,
+                    route=inbound.output_route,
+                    scene=inbound.scene,
                     content=Content.from_text("world"),
+                    reply_to_message_id=inbound.reply_target_id,
                 ),
             )
             await asyncio.wait_for(adapter.sent_event.wait(), timeout=2)
@@ -148,6 +162,7 @@ class BodyBootstrapTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(adapter.stopped)
         self.assertFalse(app.is_running)
+        dependencies.database.close()
 
 
 if __name__ == "__main__":

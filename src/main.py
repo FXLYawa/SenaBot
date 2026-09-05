@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 from pathlib import Path
 
 from adapter.model.openai_compatible import OpenAICompatibleProvider
+from adapter.model.openai_embedding import OpenAICompatibleEmbeddingProvider
 from config import load_model_config
 from core.application.bootstrap import (
     SenaBotConfig,
     SenaBotDependencies,
     create_senabot_app,
 )
+from core.data import SQLiteDatabase
 from core.model import ModelMessage, ModelProvider, ModelRequest
 
 
@@ -58,21 +61,35 @@ async def run_from_config() -> None:
 
     project_root = Path(__file__).resolve().parent.parent
     model_config = load_model_config(project_root / "config" / "model.toml")
-    provider = OpenAICompatibleProvider(
-        api_key=model_config.api_key,
-        base_url=model_config.base_url,
-        model=model_config.model,
-        timeout_seconds=model_config.timeout_seconds,
-    )
-    try:
+    embedding_config = load_model_config(project_root / "config" / "embedding.toml")
+    data_directory = project_root / "data"
+    data_directory.mkdir(parents=True, exist_ok=True)
+    async with AsyncExitStack() as resources:
+        provider = OpenAICompatibleProvider(
+            api_key=model_config.api_key,
+            base_url=model_config.base_url,
+            model=model_config.model,
+            timeout_seconds=model_config.timeout_seconds,
+        )
+        resources.push_async_callback(provider.close)
+        embedding_provider = OpenAICompatibleEmbeddingProvider(
+            api_key=embedding_config.api_key,
+            base_url=embedding_config.base_url,
+            model=embedding_config.model,
+            timeout_seconds=embedding_config.timeout_seconds,
+        )
+        resources.push_async_callback(embedding_provider.close)
+        database = resources.enter_context(
+            SQLiteDatabase(data_directory / "senabot.db")
+        )
         await run(
             SenaBotDependencies(
                 model_provider=provider,
                 memory_llm=MemoryLLMAdapter(provider),
+                embedding_provider=embedding_provider,
+                database=database,
             )
         )
-    finally:
-        await provider.close()
 
 
 if __name__ == "__main__":

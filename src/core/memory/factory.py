@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from core.memory.embedding import SimpleMemoryEmbedder
+from core.embedding import EmbeddingProvider
+from core.memory.embedding import ProviderMemoryEmbedder
 from core.memory.events import MemoryModule
 from core.memory.executor import MemoryChangeExecutor
 from core.memory.extractor import LLMMemoryExtractor
@@ -19,6 +20,7 @@ from core.memory.service import MemoryService
 
 def create_memory_module(
     memory_llm: MemoryLLMProtocol,
+    embedding_provider: EmbeddingProvider,
     repository: MemoryRepositoryProtocol,
     memory_spaces: MemorySpaceRouterProtocol,
 ) -> MemoryModule:
@@ -26,7 +28,7 @@ def create_memory_module(
 
     service = MemoryService(
         extractor=LLMMemoryExtractor(memory_llm),
-        embedder=SimpleMemoryEmbedder(),
+        embedder=ProviderMemoryEmbedder(embedding_provider),
         memory_spaces=memory_spaces,
         reranker=SimpleMemoryReranker(),
         materializer=LLMMemoryMaterializer(memory_llm),

@@ -1,6 +1,6 @@
 # Data 核心开发指南
 
-本文面向维护 `core.data` 的开发者。当前 Data 层只为 SenaBot MVP 首次运行提供最小基础设施，后续正式 Data 层可以在保持协议的前提下替换实现。
+本文面向维护 `core.data` 的开发者。Memory 已使用 SQLite 与 sqlite-vec；Context 暂时保留进程内实现。
 
 ## 1. 当前职责
 
@@ -19,22 +19,23 @@ Context
 
 Memory
   -> MemoryRepositoryProtocol
-  -> InMemoryMemoryRepository
-  -> InMemoryDataStore
+  -> SQLiteMemoryRepository
+  -> SQLite + sqlite-vec
 
 Memory
   -> MemorySpaceRouterProtocol
-  -> InMemoryMemorySpaceRouter
-  -> InMemoryMemoryRetriever
+  -> SQLiteMemorySpaceRouter
+  -> SQLiteMemoryRetriever
 ```
 
-当前实现全部在进程内存中，不写磁盘，不提供事务，不提供跨进程恢复，也不提供真正的向量索引。
+Memory 支持事务、跨进程恢复和余弦相似度检索；Context 仍只保存在进程内。
 
 ## 2. 文件职责
 
 | 文件 | 职责 |
 |---|---|
-| `store.py` | 保存 Context 快照和 MemoryItem 的进程内 Store |
+| `database.py` | 管理 SQLite 连接、迁移、事务与 sqlite-vec 初始化 |
+| `store.py` | 暂存 Context 快照的进程内 Store |
 | `events.py` | 订阅 Context restore/state changed 事件 |
 | `memory.py` | 实现 MemoryRepositoryProtocol 和 MemorySpaceRouterProtocol |
 | `__init__.py` | Data 层公开导出 |
@@ -58,28 +59,25 @@ context.state.changed
 
 ## 4. Memory 链路
 
-`InMemoryMemoryRepository` 实现 Memory 写入端口：
+`SQLiteMemoryRepository` 实现 Memory 写入端口：
 
-- `add()`：保存新增 MemoryItem；
+- `add()`：保存新增 MemoryItem、Scope、Provenance 和检索向量；
 - `end_fact_validity()`：更新 Fact 的 `valid_to`；
-- `supersede()`：保存替代版本，并返回旧版本和新版本。
+- `supersede()`：原子保存替代版本和新旧版本关系。
 
-`InMemoryMemorySpaceRouter` 实现 Memory 查询端口：
+`SQLiteMemorySpaceRouter` 实现 Memory 查询端口：
 
 ```text
 memory_space_id
-  -> InMemoryMemoryRetriever
-  -> Store 中同一 Memory Space 的 MemoryItem
-  -> MemoryRecallContext.matches(item)
+  -> SQLiteMemoryRetriever
+  -> Memory Space / Scope / 当前有效版本过滤
+  -> sqlite-vec 余弦相似度排序
 ```
-
-当前 Retriever 忽略 query embedding，只做 Memory Space 和 Scope 粗筛，适合 MVP 链路验证，不代表正式语义检索。
 
 ## 5. 当前限制
 
-- 数据只存在进程内，程序重启后丢失；
+- Context 数据只存在进程内，程序重启后丢失；
 - Context compaction 的增量事件只保存新 Summary，不删除被覆盖的旧 Entry；
-- Memory supersede 只保存替代版本，不记录新旧版本关系；
 - `operation_id` 不提供幂等或重试 ledger；
-- 没有事务、锁、磁盘文件、数据库或向量库；
-- 后续正式 Data 层应优先替换 `store.py` 和 `memory.py` 的实现，而不是修改 Context/Memory 领域逻辑。
+- Retriever 当前对关系过滤后的候选计算精确距离，数据量增大后需要增加可预过滤的向量索引方案；
+- Context 的 SQLite Repository 和恢复链路尚未实现。
