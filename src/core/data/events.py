@@ -9,15 +9,15 @@ from core.context.contracts import (
     ContextRestoreStatus,
     ContextStateChangedEventData,
 )
-from core.data.store import InMemoryDataStore
+from core.data.context import ContextRepositoryProtocol
 from core.event import EventFlow, ModuleEventAPI
 
 
 class DataModule:
     """MVP Data 事件适配器。"""
 
-    def __init__(self, store: InMemoryDataStore) -> None:
-        self._store = store
+    def __init__(self, context_repository: ContextRepositoryProtocol) -> None:
+        self._context_repository = context_repository
 
     def register(self, events: ModuleEventAPI) -> None:
         """订阅 Context 的恢复请求和状态变化。"""
@@ -38,7 +38,7 @@ class DataModule:
 
         request: ContextRestoreRequestData = flow.payload
         try:
-            snapshot = self._store.load_context(request.session_id)
+            snapshot = self._context_repository.load_context(request.session_id)
         except Exception as error:
             flow.emit(
                 "context.restore.resolved",
@@ -76,4 +76,4 @@ class DataModule:
         """持久化 Context 增量状态变化。"""
 
         change: ContextStateChangedEventData = flow.payload
-        self._store.save_context_change(change)
+        self._context_repository.save_context_change(change)
