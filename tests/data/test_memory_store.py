@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -38,12 +38,21 @@ def _item(
     *,
     content: str = "用户喜欢咖啡",
     memory_space_id: str = "sena",
+    recorded_at: datetime = RECORDED_AT,
+    valid_from: datetime | None = None,
+    valid_to: datetime | None = None,
 ) -> MemoryItem:
     return MemoryItem(
         item_id=item_id,
         memory_space_id=memory_space_id,
         scopes=frozenset({USER_SCOPE}),
-        payload=Fact(content=content, provenance=PROVENANCE, recorded_at=RECORDED_AT),
+        payload=Fact(
+            content=content,
+            provenance=PROVENANCE,
+            recorded_at=recorded_at,
+            valid_from=valid_from,
+            valid_to=valid_to,
+        ),
     )
 
 
@@ -57,7 +66,10 @@ def _context(user_id: str = "user_1") -> MemoryRecallContext:
 async def test_repository_persists_item_and_retriever_uses_vector_scope_and_space():
     with SQLiteDatabase(":memory:") as database:
         repository = SQLiteMemoryRepository(database, StubEmbeddingProvider())
-        router = SQLiteMemorySpaceRouter(database)
+        router = SQLiteMemorySpaceRouter(
+            database,
+            clock=lambda: datetime(2026, 9, 5, tzinfo=UTC),
+        )
         coffee = _item("memory_1")
         tea = _item("memory_2", content="用户喜欢茶")
         other_space = _item("memory_3", memory_space_id="other")
@@ -85,7 +97,10 @@ async def test_repository_persists_item_and_retriever_uses_vector_scope_and_spac
 async def test_end_fact_validity_removes_fact_from_current_retrieval():
     with SQLiteDatabase(":memory:") as database:
         repository = SQLiteMemoryRepository(database, StubEmbeddingProvider())
-        router = SQLiteMemorySpaceRouter(database)
+        router = SQLiteMemorySpaceRouter(
+            database,
+            clock=lambda: datetime(2026, 9, 5, tzinfo=UTC),
+        )
         await repository.add(MemoryWriteEnvelope("operation_1", _item("memory_1")))
 
         updated = await repository.end_fact_validity(
@@ -146,3 +161,63 @@ async def test_item_and_vector_can_be_retrieved_after_database_reopens():
             ).retrieve([1.0, 0.0, 0.0], context=_context())
 
         assert [value.memory for value in candidates] == [item]
+
+
+@pytest.mark.asyncio
+async def test_datetime_values_are_stored_as_fixed_precision_utc():
+    china_time = timezone(timedelta(hours=8))
+    item = _item(
+        "memory_1",
+        recorded_at=datetime(2026, 9, 5, 12, tzinfo=china_time),
+        valid_from=datetime(2026, 9, 5, 12, tzinfo=china_time),
+    )
+    with SQLiteDatabase(":memory:") as database:
+        repository = SQLiteMemoryRepository(database, StubEmbeddingProvider())
+        await repository.add(MemoryWriteEnvelope("operation_1", item))
+        row = database.connection.execute(
+            "SELECT recorded_at, valid_from FROM memory_items"
+        ).fetchone()
+
+        assert tuple(row) == (
+            "2026-09-05T04:00:00.000000+00:00",
+            "2026-09-05T04:00:00.000000+00:00",
+        )
+
+
+@pytest.mark.asyncio
+async def test_repository_rejects_timezone_naive_datetime():
+    item = _item("memory_1", recorded_at=datetime(2026, 9, 5, 12))
+    with SQLiteDatabase(":memory:") as database:
+        repository = SQLiteMemoryRepository(database, StubEmbeddingProvider())
+        with pytest.raises(ValueError, match="timezone-aware"):
+            await repository.add(MemoryWriteEnvelope("operation_1", item))
+        assert database.connection.execute(
+            "SELECT count(*) FROM memory_items"
+        ).fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_retriever_uses_complete_fact_validity_interval():
+    query_time = datetime(2026, 10, 1, tzinfo=UTC)
+    active = _item(
+        "active",
+        valid_from=datetime(2026, 9, 1, tzinfo=UTC),
+        valid_to=datetime(2026, 12, 1, tzinfo=UTC),
+    )
+    future = _item(
+        "future",
+        valid_from=datetime(2026, 10, 2, tzinfo=UTC),
+    )
+    with SQLiteDatabase(":memory:") as database:
+        repository = SQLiteMemoryRepository(database, StubEmbeddingProvider())
+        await repository.add(MemoryWriteEnvelope("operation_1", active))
+        await repository.add(MemoryWriteEnvelope("operation_2", future))
+        candidates = await SQLiteMemorySpaceRouter(
+            database,
+            clock=lambda: query_time,
+        ).for_space("sena").retrieve(
+            [1.0, 0.0, 0.0],
+            context=_context(),
+        )
+
+        assert [value.memory for value in candidates] == [active]
