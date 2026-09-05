@@ -65,6 +65,8 @@ context.state.changed
 - `end_fact_validity()`：更新 Fact 的 `valid_to`；
 - `supersede()`：原子保存替代版本和新旧版本关系。
 
+Memory 负责选择索引文本并生成向量，Repository 接收包含 Item 与向量的 `MemoryWriteEnvelope`，只处理持久化。
+
 `SQLiteMemorySpaceRouter` 实现 Memory 查询端口：
 
 ```text

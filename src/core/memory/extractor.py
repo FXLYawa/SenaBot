@@ -1,4 +1,3 @@
-import json
 from collections.abc import Callable
 from uuid import uuid4
 
@@ -7,6 +6,7 @@ from .models import (
     MemoryExtractionContext,
     MemoryExtractionMessage,
 )
+from .json_response import parse_json_response
 from .prompts.extraction import MEMORY_EXTRACTION_PROMPT
 from .protocols import MemoryLLMProtocol
 
@@ -76,7 +76,7 @@ class LLMMemoryExtractor:
     ) -> list[MemoryCandidate]:
         """将 LLM 返回的 JSON 转换为候选记忆。"""
 
-        data = json.loads(response)
+        data = parse_json_response(response)
 
         if not isinstance(data, dict):
             raise ValueError("memory extraction response must be a JSON object")

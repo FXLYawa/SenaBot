@@ -16,6 +16,7 @@ from core.memory.executor import (
 )
 from core.memory.models import (
     Fact,
+    MemoryIndexEmbedding,
     MemoryItem,
     MemoryScopeKind,
     MemoryScopeRef,
@@ -117,11 +118,20 @@ class RecordingRepository:
         )
 
 
+class RecordingIndexer:
+    async def embed_item(self, item: MemoryItem) -> MemoryIndexEmbedding:
+        return MemoryIndexEmbedding((1.0, 0.0), "test-model")
+
+
 @pytest.mark.asyncio
 async def test_add_builds_envelope_and_calls_repository():
     repository = RecordingRepository()
     payload = create_fact()
-    executor = MemoryChangeExecutor(repository, lambda: "item-001")
+    executor = MemoryChangeExecutor(
+        repository,
+        lambda: "item-001",
+        indexer=RecordingIndexer(),
+    )
 
     result = await executor.execute(
         create_input(
@@ -139,12 +149,17 @@ async def test_add_builds_envelope_and_calls_repository():
     assert envelope.item.memory_space_id == "space-001"
     assert envelope.item.scopes == SCOPES
     assert envelope.item.payload is payload
+    assert envelope.embedding == MemoryIndexEmbedding((1.0, 0.0), "test-model")
 
 
 @pytest.mark.asyncio
 async def test_no_change_does_not_call_repository():
     repository = RecordingRepository()
-    executor = MemoryChangeExecutor(repository, lambda: "unused-item-id")
+    executor = MemoryChangeExecutor(
+        repository,
+        lambda: "unused-item-id",
+        indexer=RecordingIndexer(),
+    )
     plan = MemoryChangePlan(
         operations=(NoMemoryChange(reason="已有记忆覆盖"),)
     )
@@ -160,7 +175,11 @@ async def test_no_change_does_not_call_repository():
 async def test_end_fact_validity_calls_repository_port():
     target = create_item("fact-001", create_fact())
     repository = RecordingRepository((target,))
-    executor = MemoryChangeExecutor(repository, lambda: "unused-item-id")
+    executor = MemoryChangeExecutor(
+        repository,
+        lambda: "unused-item-id",
+        indexer=RecordingIndexer(),
+    )
     plan = MemoryChangePlan(
         operations=(EndFactValidity("fact-001", RECORDED_AT),)
     )
@@ -195,7 +214,11 @@ async def test_supersede_calls_repository_port_with_replacement():
     )
     target = create_item("understanding-001", old_payload)
     repository = RecordingRepository((target,))
-    executor = MemoryChangeExecutor(repository, lambda: "item-002")
+    executor = MemoryChangeExecutor(
+        repository,
+        lambda: "item-002",
+        indexer=RecordingIndexer(),
+    )
     plan = MemoryChangePlan(
         operations=(
             SupersedeMemoryItem("understanding-001", replacement),
@@ -221,7 +244,11 @@ async def test_supersede_calls_repository_port_with_replacement():
 @pytest.mark.asyncio
 async def test_executor_validates_targets_before_repository_call():
     repository = RecordingRepository()
-    executor = MemoryChangeExecutor(repository, lambda: "unused-item-id")
+    executor = MemoryChangeExecutor(
+        repository,
+        lambda: "unused-item-id",
+        indexer=RecordingIndexer(),
+    )
     plan = MemoryChangePlan(
         operations=(EndFactValidity("missing-item", RECORDED_AT),)
     )

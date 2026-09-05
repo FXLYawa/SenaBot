@@ -13,6 +13,7 @@ from core.memory.models import (
     MemoryCandidate,
     MemoryDomain,
     MemoryItem,
+    MemoryIndexEmbedding,
     MemoryMaterializationInput,
     MemoryPayload,
     MemoryScopeKind,
@@ -137,6 +138,7 @@ def test_write_envelope_keeps_operation_id_outside_memory_item():
     envelope = MemoryWriteEnvelope(
         operation_id="operation-001",
         item=item,
+        embedding=MemoryIndexEmbedding((1.0,), "test-model"),
     )
 
     assert envelope.item is item
@@ -152,6 +154,7 @@ def test_write_envelope_requires_operation_id():
         MemoryWriteEnvelope(
             operation_id=" ",
             item=create_item(),
+            embedding=MemoryIndexEmbedding((1.0,), "test-model"),
         )
 
 

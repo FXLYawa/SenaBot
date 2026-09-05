@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -393,11 +394,41 @@ class MemoryReviewInput:
 
 
 @dataclass(frozen=True)
+class MemoryIndexEmbedding:
+    """Memory 生成并交给持久化层保存的检索向量。"""
+
+    vector: tuple[float, ...]
+    model: str
+
+    def __post_init__(self) -> None:
+        _require_non_blank(self.model, "embedding model")
+        if not self.vector:
+            raise ValueError("embedding vector must not be empty")
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            for value in self.vector
+        ):
+            raise ValueError("embedding vector must contain finite numbers")
+        object.__setattr__(
+            self,
+            "vector",
+            tuple(float(value) for value in self.vector),
+        )
+
+    @property
+    def dimensions(self) -> int:
+        return len(self.vector)
+
+
+@dataclass(frozen=True)
 class MemoryWriteEnvelope:
     """正式 MemoryItem 及其写入操作上下文。"""
 
     operation_id: str
     item: MemoryItem
+    embedding: MemoryIndexEmbedding
 
     def __post_init__(self) -> None:
         _require_non_blank(self.operation_id, "operation_id")

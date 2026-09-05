@@ -17,7 +17,7 @@ from .models import (
     MemorySupersedeResult,
     MemoryWriteEnvelope,
 )
-from .protocols import MemoryRepositoryProtocol
+from .protocols import MemoryIndexerProtocol, MemoryRepositoryProtocol
 
 
 def _new_item_id() -> str:
@@ -68,8 +68,11 @@ class MemoryChangeExecutor:
         self,
         repository: MemoryRepositoryProtocol,
         item_id_factory: Callable[[], str] = _new_item_id,
+        *,
+        indexer: MemoryIndexerProtocol,
     ) -> None:
         self._repository = repository
+        self._indexer = indexer
         self._item_id_factory = item_id_factory
 
     async def execute(
@@ -128,7 +131,7 @@ class MemoryChangeExecutor:
     ) -> MemoryItem:
         """组装新增记忆并交给持久化端口。"""
         return await self._repository.add(
-            self._build_envelope(operation.payload, input_data)
+            await self._build_envelope(operation.payload, input_data)
         )
 
     async def _execute_end_fact_validity(
@@ -152,24 +155,26 @@ class MemoryChangeExecutor:
         return await self._repository.supersede(
             operation_id=input_data.operation_id,
             target_item_id=operation.target_item_id,
-            replacement=self._build_envelope(
+            replacement=await self._build_envelope(
                 operation.replacement,
                 input_data,
             ),
         )
 
-    def _build_envelope(
+    async def _build_envelope(
         self,
         payload: MemoryPayload,
         input_data: MemoryChangeExecutionInput,
     ) -> MemoryWriteEnvelope:
         """把MemoryPayload转为正式写入对象"""
+        item = MemoryItem(
+            item_id=self._item_id_factory(),
+            memory_space_id=input_data.memory_space_id,
+            scopes=input_data.scopes,
+            payload=payload,
+        )
         return MemoryWriteEnvelope(
             operation_id=input_data.operation_id,
-            item=MemoryItem(
-                item_id=self._item_id_factory(),
-                memory_space_id=input_data.memory_space_id,
-                scopes=input_data.scopes,
-                payload=payload,
-            ),
+            item=item,
+            embedding=await self._indexer.embed_item(item),
         )

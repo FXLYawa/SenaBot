@@ -11,7 +11,6 @@ from datetime import UTC, datetime
 from sqlite_vec import serialize_float32
 
 from core.data.database import SQLiteDatabase
-from core.embedding import EmbeddingProvider, EmbeddingRequest
 from core.memory.models import (
     Entity, Experience, Fact, Knowledge, MemoryItem, MemoryRecallContext,
     MemoryRetrievalCandidate, MemoryScopeKind, MemoryScopeRef,
@@ -32,11 +31,6 @@ def _format_datetime(value: datetime | None) -> str | None:
 def _parse_datetime(value: str | None) -> datetime | None:
     """把数据库里的时间字符串重新还原成 Python datetime"""
     return None if value is None else datetime.fromisoformat(value)
-
-
-def _search_text(item: MemoryItem) -> str:
-    """从一条 MemoryItem 里挑出最适合拿去做 Embedding 的文本。Experience 用 summary，其他类型用 content"""
-    return item.payload.summary if isinstance(item.payload, Experience) else item.payload.content
 
 
 def _utc_now() -> datetime:
@@ -70,19 +64,14 @@ def _payload_json(item: MemoryItem) -> str:
 class SQLiteMemoryRepository:
     """把 MemoryItem、来源、Scope 和检索向量原子写入 SQLite。"""
 
-    def __init__(self, database: SQLiteDatabase, embedding_provider: EmbeddingProvider) -> None:
+    def __init__(self, database: SQLiteDatabase) -> None:
 
         # 负责数据库连接/事务
         self._database = database
-        # 负责把Memory文本转成向量
-        self._embedding_provider = embedding_provider
 
     async def add(self, envelope: MemoryWriteEnvelope) -> MemoryItem:
         """新增一条完整Memory"""
-        # 调用模型得到向量
-        embedding = await self._embedding_provider.embed(EmbeddingRequest(_search_text(envelope.item)))
-
-        #确保维度正确
+        embedding = envelope.embedding
         self._database.initialize_vectors(embedding.dimensions)
 
         #事务性写入
@@ -128,9 +117,7 @@ class SQLiteMemoryRepository:
         """用一条新的 Memory 替代旧 Memory，但不删除旧 Memory，而是同时保留“旧 → 新”的替代关系。"""
 
         # 生成代替的embedding
-        embedding = await self._embedding_provider.embed(EmbeddingRequest(_search_text(replacement.item)))
-
-        # 保证向量维度
+        embedding = replacement.embedding
         self._database.initialize_vectors(embedding.dimensions)
 
         # 开启事务
