@@ -15,11 +15,8 @@ from core.body.contracts import (
     SourceInfo,
 )
 from core.body.common import ErrorInfo, OperationStatus, UserRole
-from core.body.events import (
-    publish_body_input,
-    register_body_events,
-    subscribe_body_events,
-)
+from core.body.events import BodyModule
+from core.body.factory import create_body_module
 from core.body.ports import AdapterRegistry, BodyAdapter
 from core.body.runtime import BodyRuntime
 
@@ -29,6 +26,7 @@ __all__ = [
     "AdapterRegistry",
     "BodyAdapter",
     "BodyInputEventData",
+    "BodyModule",
     "BodyOutputItemResult",
     "BodyOutputRequestData",
     "BodyOutputResultEventData",
@@ -38,13 +36,11 @@ __all__ = [
     "Content",
     "ContentSegment",
     "ContentType",
+    "create_body_module",
     "ErrorInfo",
     "OperationStatus",
-    "publish_body_input",
-    "register_body_events",
     "SceneInfo",
     "SceneType",
     "SourceInfo",
-    "subscribe_body_events",
     "UserRole",
 ]

@@ -8,53 +8,60 @@ from core.body.contracts import (
     BodyOutputRequestData,
     BodyOutputResultEventData,
 )
+from core.body.ports import BodyAdapter
 from core.body.runtime import BodyRuntime
 from core.event import EventClient, EventFlow, ModuleEventAPI
 
 
-async def publish_body_input(
-    events: EventClient,
-    runtime: BodyRuntime,
-    message: AdapterInboundMessage,
-) -> BodyInputEventData | None:
-    """Body 模块的入站入口：接收平台消息并发布标准输入事件。
+class BodyModule:
+    """组装 Body Runtime 与 Adapter，并提供统一的事件注册和输入入口。"""
 
-    过滤/去重/归一化由 BodyRuntime 完成，随后以 Body 身份发布
-    body.input.received；消息被过滤时返回 None。
-    """
+    def __init__(self, runtime: BodyRuntime) -> None:
+        self._runtime = runtime
 
-    payload = await runtime.handle_adapter_input(message)
-    if payload is None:
-        return None
-    await events.publish("body.input.received", payload)
-    return payload
+    def register(self, events: ModuleEventAPI) -> None:
+        """声明 Body 事件并订阅输出请求。"""
 
+        event_definitions = (
+            ("body.input.received", BodyInputEventData),
+            ("body.output.requested", BodyOutputRequestData),
+            ("body.output.completed", BodyOutputResultEventData),
+            ("body.output.partially_completed", BodyOutputResultEventData),
+            ("body.output.failed", BodyOutputResultEventData),
+        )
+        subscriptions = (
+            (
+                "body.output.requested",
+                self._handle_output,
+                "body.output.dispatch",
+            ),
+        )
 
-def register_body_events(events: ModuleEventAPI) -> None:
-    """声明 Body 拥有的事件定义（公共契约，不依赖 runtime）。"""
+        for event_type, payload_type in event_definitions:
+            events.register(event_type, payload_type=payload_type)
+        for event_pattern, handler, handler_id in subscriptions:
+            events.subscribe(event_pattern, handler, handler_id=handler_id)
 
-    # 输入事件：Context 是 consumer，插件可以作为 observer 旁路观察。
-    events.register("body.input.received", payload_type=BodyInputEventData)
-    events.register("body.output.requested", payload_type=BodyOutputRequestData)
-    for event_type in (
-        "body.output.completed",
-        "body.output.partially_completed",
-        "body.output.failed",
-    ):
-        events.register(event_type, payload_type=BodyOutputResultEventData)
+    def register_adapter(self, adapter: BodyAdapter) -> None:
+        """注册组合根创建的平台 Adapter。"""
 
+        self._runtime.adapters.register(adapter)
 
-def subscribe_body_events(events: ModuleEventAPI, runtime: BodyRuntime) -> None:
-    """Body 的 Handler 接线（内部实现，依赖 runtime）。"""
+    async def publish_input(
+        self,
+        events: EventClient,
+        message: AdapterInboundMessage,
+    ) -> BodyInputEventData | None:
+        """接收 Adapter 输入并发布标准 Body 输入事件。"""
 
-    async def handle_output(flow: EventFlow) -> None:
-        """执行输出请求，并按结果 outcome 分发对应的完成/失败事件。"""
-        # 会话路由由 Body 内部解析，Event 核心不解释业务 Payload。
-        result = await runtime.handle_output_request(flow.payload)
+        payload = await self._runtime.handle_adapter_input(message)
+        if payload is None:
+            return None
+        await events.publish("body.input.received", payload)
+        return payload
+
+    async def _handle_output(self, flow: EventFlow) -> None:
+        """执行输出请求，并按结果发布完成、部分完成或失败事件。"""
+
+        result = await self._runtime.handle_output_request(flow.payload)
         flow.emit(f"body.output.{result.outcome}", result)
-
-    events.subscribe(
-        "body.output.requested",
-        handle_output,
-        handler_id="body.output.dispatch",
-    )
