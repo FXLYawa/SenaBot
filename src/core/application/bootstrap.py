@@ -16,9 +16,10 @@ from core.body import (
     create_body_module,
 )
 from core.context import ContextCompressor, create_context_module
-from core.data import InMemoryDataStore, create_data_components
+from core.data import InMemoryDataStore, SQLiteDatabase, create_data_components
+from core.embedding import EmbeddingProvider
 from core.event import EventBus, EventClient, ModuleEventAPI
-from core.memory import MemoryLLMProtocol, create_memory_module
+from core.memory import MemoryLLMProtocol, MemoryRecallPolicy, create_memory_module
 from core.model import ModelProvider
 
 
@@ -62,6 +63,7 @@ class SenaBotConfig:
     persona: PersonaConfig = field(default_factory=PersonaConfig)
     desktop: DesktopConfig | None = field(default_factory=DesktopConfig)
     enable_context_compression: bool = True
+    memory_recall: MemoryRecallPolicy = field(default_factory=MemoryRecallPolicy)
 
     def __post_init__(self) -> None:
         if not self.owner_user_id.strip():
@@ -76,6 +78,8 @@ class SenaBotDependencies:
 
     model_provider: ModelProvider
     memory_llm: MemoryLLMProtocol
+    embedding_provider: EmbeddingProvider
+    database: SQLiteDatabase
     fallback_model_provider: ModelProvider | None = None
     event_bus: EventBus | None = None
     data_store: InMemoryDataStore | None = None
@@ -94,7 +98,10 @@ def create_senabot_app(
     event_bus = dependencies.event_bus or EventBus()
 
     # 2. 装配各个模块
-    data_components = create_data_components(dependencies.data_store)
+    data_components = create_data_components(
+        dependencies.database,
+        dependencies.data_store,
+    )
     body_module = create_body_module(app_config.owner_user_id)
     context_module = create_context_module(
         dependencies.model_provider,
@@ -103,8 +110,10 @@ def create_senabot_app(
     )
     memory_module = create_memory_module(
         dependencies.memory_llm,
+        dependencies.embedding_provider,
         data_components.memory_repository,
         data_components.memory_spaces,
+        app_config.memory_recall,
     )
     agent_module = create_agent_module(
         dependencies.model_provider,

@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 import pytest
 
 from core.memory.contracts import MemoryQueryRequest
-from core.memory.embedding import SimpleMemoryEmbedder
+from core.embedding import EmbeddingRequest, EmbeddingResponse
+from core.memory.embedding import ProviderMemoryEmbedder, SimpleMemoryEmbedder
 from core.memory.models import (
     Fact,
     MemoryItem,
@@ -18,7 +19,7 @@ from core.memory.retriever import (
     SimpleMemoryRetriever,
     SimpleMemorySpaceRouter,
 )
-from core.memory.service import MemoryService
+from core.memory.service import MemoryRecallPolicy, MemoryService
 
 
 def create_memory(
@@ -72,6 +73,18 @@ class RecordingEmbedder:
     async def embed(self, query: str) -> list[float]:
         self.calls.append(("embed", query))
         return [1.0, 2.0]
+
+
+class RecordingEmbeddingProvider:
+    def __init__(self) -> None:
+        self.requests: list[EmbeddingRequest] = []
+
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        self.requests.append(request)
+        return EmbeddingResponse((0.5, 0.25), "test-model")
+
+    async def close(self) -> None:
+        pass
 
 
 class RecordingRetriever:
@@ -223,7 +236,43 @@ async def test_query_runs_complete_retrieval_pipeline():
     assert result.user_id == "user-001"
     assert result.session_id == "session-001"
     assert result.group_id == "group-001"
-    assert result.memories == [second_memory, first_memory]
+    assert result.memories == [second_memory]
+
+
+@pytest.mark.asyncio
+async def test_private_query_does_not_create_blank_group_scope():
+    calls: list[object] = []
+    service = MemoryService(
+        extractor=object(),
+        embedder=RecordingEmbedder(calls),
+        memory_spaces=RecordingMemorySpaceRouter(
+            calls,
+            RecordingRetriever(calls, []),
+        ),
+        reranker=RecordingReranker(calls),
+        materializer=object(),
+        reviewer=object(),
+        executor=object(),
+    )
+
+    await service.query(
+        MemoryQueryRequest(
+            query_id="query-private",
+            memory_space_id="space-001",
+            user_id="user-001",
+            session_id="session-001",
+            group_id="",
+            query_text="私聊查询",
+        )
+    )
+
+    retrieve_call = next(call for call in calls if call[0] == "retrieve")
+    assert retrieve_call[2].scopes == frozenset(
+        {
+            MemoryScopeRef(MemoryScopeKind.USER, "user-001"),
+            MemoryScopeRef(MemoryScopeKind.SESSION, "session-001"),
+        }
+    )
 
 
 @pytest.mark.asyncio
@@ -263,6 +312,19 @@ async def test_simple_embedder_returns_placeholder_vector():
 
     assert await embedder.embed("跑步") == [2.0]
     assert await embedder.embed("   ") == [0.0]
+
+
+@pytest.mark.asyncio
+async def test_memory_owns_item_embedding_text_selection():
+    provider = RecordingEmbeddingProvider()
+    embedder = ProviderMemoryEmbedder(provider)
+    item = create_memory("memory-001", "用户喜欢跑步")
+
+    embedding = await embedder.embed_item(item)
+
+    assert provider.requests == [EmbeddingRequest("用户喜欢跑步")]
+    assert embedding.vector == (0.5, 0.25)
+    assert embedding.model == "test-model"
 
 
 @pytest.mark.asyncio
@@ -349,6 +411,20 @@ def test_recall_context_matches_same_user_scope():
     )
 
     assert context.matches(item)
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        {"query_limit": 0},
+        {"formation_limit": 0},
+        {"query_min_score": 1.1},
+        {"formation_min_score": float("nan")},
+    ],
+)
+def test_recall_policy_rejects_invalid_limits_and_scores(policy):
+    with pytest.raises(ValueError):
+        MemoryRecallPolicy(**policy)
 
 
 def test_recall_context_rejects_different_user_scope():

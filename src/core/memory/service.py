@@ -1,3 +1,5 @@
+import math
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from .contracts import (
@@ -26,6 +28,7 @@ from .models import (
     MemoryFormationInput,
     MemoryMaterializationInput,
     MemoryRecallContext,
+    MemoryRetrievalCandidate,
     MemoryReviewInput,
     MemoryScopeKind,
     MemoryScopeRef,
@@ -46,24 +49,34 @@ def _build_query_recall_context(
 ) -> MemoryRecallContext:
     """根据查询请求构造当前可召回的 Scope 边界。"""
 
-    return MemoryRecallContext(
-        scopes=frozenset(
-            {
-                MemoryScopeRef(
-                    kind=MemoryScopeKind.USER,
-                    scope_id=request.user_id,
-                ),
-                MemoryScopeRef(
-                    kind=MemoryScopeKind.SESSION,
-                    scope_id=request.session_id,
-                ),
-                MemoryScopeRef(
-                    kind=MemoryScopeKind.GROUP,
-                    scope_id=request.group_id,
-                ),
-            }
-        )
-    )
+    scopes = {
+        MemoryScopeRef(MemoryScopeKind.USER, request.user_id),
+        MemoryScopeRef(MemoryScopeKind.SESSION, request.session_id),
+    }
+    if request.group_id.strip():
+        scopes.add(MemoryScopeRef(MemoryScopeKind.GROUP, request.group_id))
+    return MemoryRecallContext(scopes=frozenset(scopes))
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryRecallPolicy:
+    """普通查询与 Formation 查重各自的候选过滤策略。"""
+
+    query_min_score: float = 0.25
+    query_limit: int = 5
+    formation_min_score: float = 0.4
+    formation_limit: int = 20
+
+    def __post_init__(self) -> None:
+        if self.query_limit <= 0 or self.formation_limit <= 0:
+            raise ValueError("memory recall limits must be positive")
+        for score in (self.query_min_score, self.formation_min_score):
+            if (
+                isinstance(score, bool)
+                or not math.isfinite(score)
+                or not -1 <= score <= 1
+            ):
+                raise ValueError("memory recall minimum scores must be between -1 and 1")
 
 
 class MemoryService:
@@ -78,6 +91,7 @@ class MemoryService:
         materializer: MemoryMaterializerProtocol,
         reviewer: MemoryReviewerProtocol,
         executor: MemoryChangeExecutorProtocol,
+        recall_policy: MemoryRecallPolicy | None = None,
     ) -> None:
         self.extractor = extractor
         self.embedder = embedder
@@ -86,6 +100,7 @@ class MemoryService:
         self.materializer = materializer
         self.reviewer = reviewer
         self.executor = executor
+        self.recall_policy = recall_policy or MemoryRecallPolicy()
 
     async def query(
         self,
@@ -110,6 +125,11 @@ class MemoryService:
         candidates = await self.reranker.rerank(
             request.query_text,
             candidates,
+        )
+        candidates = self._filter_candidates(
+            candidates,
+            min_score=self.recall_policy.query_min_score,
+            limit=self.recall_policy.query_limit,
         )
 
         memories = [candidate.memory for candidate in candidates]
@@ -145,6 +165,11 @@ class MemoryService:
             query_embedding,
             context=input_data.recall_context,
         )
+        retrieval_candidates = self._filter_candidates(
+            retrieval_candidates,
+            min_score=self.recall_policy.formation_min_score,
+            limit=self.recall_policy.formation_limit,
+        )
 
         # 得到相关记忆集合
         related_items = tuple(candidate.memory for candidate in retrieval_candidates)
@@ -176,6 +201,17 @@ class MemoryService:
                 operation_id=input_data.operation_id,
             )
         )
+
+    @staticmethod
+    def _filter_candidates(
+        candidates: list[MemoryRetrievalCandidate],
+        *,
+        min_score: float,
+        limit: int,
+    ) -> list[MemoryRetrievalCandidate]:
+        return [candidate for candidate in candidates if candidate.score >= min_score][
+            :limit
+        ]
 
     async def write(
         self,

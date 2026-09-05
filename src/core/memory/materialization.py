@@ -1,4 +1,3 @@
-import json
 from datetime import datetime
 from typing import Any
 
@@ -13,6 +12,7 @@ from .models import (
     MemoryPayload,
     Understanding,
 )
+from .json_response import parse_json_response
 from .prompts import MEMORY_MATERIALIZATION_PROMPT
 from .protocols import MemoryLLMProtocol
 
@@ -47,7 +47,7 @@ class LLMMemoryMaterializer:
         这里只负责校验通用响应结构并根据 domain 分发，
         具体 Payload 的字段解析和对象构造交给对应的私有函数。
         """
-        data = json.loads(response)
+        data = parse_json_response(response)
 
         if not isinstance(data, dict):
             raise ValueError("memory materialization response must be a JSON object")

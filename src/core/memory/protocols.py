@@ -14,6 +14,7 @@ from .models import (
     MemoryRetrievalCandidate,
     MemorySupersedeResult,
     MemoryItem,
+    MemoryIndexEmbedding,
     MemoryWriteEnvelope,
 )
 
@@ -52,6 +53,12 @@ class MemoryEmbeddingProtocol(Protocol):
         self,
         query: str,
     ) -> list[float]: ...
+
+
+class MemoryIndexerProtocol(Protocol):
+    """为正式 MemoryItem 生成可持久化的检索向量。"""
+
+    async def embed_item(self, item: MemoryItem) -> MemoryIndexEmbedding: ...
 
 
 class MemoryRetrieverProtocol(Protocol):

@@ -42,7 +42,7 @@ flowchart TD
 5. `events.py`：Memory 事件注册和 Handler；
 6. `change_plan.py`、`executor.py`：变更计划和正式写入；
 7. `extractor.py`、`materialization.py`、`reviewer.py`：LLM 边界；
-8. `retriever.py`、`embedding.py`、`reranker.py`：MVP 检索占位实现。
+8. `embedding.py`、`reranker.py`：查询/索引向量适配和基础重排实现。
 
 ## 2. 边界和文件职责
 
@@ -60,7 +60,7 @@ flowchart TD
 | `materialization.py` | Candidate 到 typed Payload 的 LLM 实现 |
 | `reviewer.py` | Payload 与 related items 的审查 |
 | `retriever.py` | MVP 内存检索器与 Memory Space Router |
-| `embedding.py`、`reranker.py` | MVP embedding 与 rerank 占位实现 |
+| `embedding.py`、`reranker.py` | 查询向量、MemoryItem 索引向量与基础重排实现 |
 
 必须保持的边界：
 
@@ -105,6 +105,7 @@ MemoryQueryRequest
   -> memory_spaces.for_space(memory_space_id)
   -> retriever.retrieve(embedding, context)
   -> reranker.rerank(query_text, candidates)
+  -> recall policy 过滤阈值并限制结果数量
   -> MemoryQueryResult(memories)
 ```
 
@@ -152,6 +153,8 @@ Materialization、Review 和 Executor 使用同一份 `related_items` 快照。�
 
 Executor 会调用 `MemoryChangePlan.validate_against(related_items)`，再把 Add、EndFactValidity、Supersede 转换为 Repository 操作。`NoMemoryChange` 不产生持久化调用。
 
+新增或替代 MemoryItem 时，Executor 通过 Memory Indexer 选择领域检索文本并生成向量，再把 Item 和向量装入同一个 `MemoryWriteEnvelope`。Data 只负责原子保存，不解释 Fact、Experience 等领域内容。
+
 ## 7. Event 装配
 
 `MemoryModule.register()` 注册 Memory 拥有的事件：
@@ -176,7 +179,7 @@ Handler 捕获业务调用中的异常后发布 failed 事件。未预期的 Eve
 
 ## 8. Memory Space 与 Scope
 
-Memory Space 是长期记忆的上层隔离边界。当前 `MemorySpaceRouterProtocol.for_space(memory_space_id)` 可以映射到向量库 namespace、tenant、partition，或 MVP 的内存 Retriever。
+Memory Space 是长期记忆的上层隔离边界。当前 `MemorySpaceRouterProtocol.for_space(memory_space_id)` 路由到 Data 提供的 SQLite Retriever；测试仍可注入内存 Retriever。
 
 Scope 是同一 Memory Space 内的长期主体归属。常见值为：
 
@@ -214,8 +217,8 @@ Memory 测试位于 `tests/memory`。当前受影响链路可以运行：
 
 当前限制：
 
-- Simple Retriever/Embedder/Reranker 只是 MVP 占位；
-- 正式 Data 层、向量库和事务语义尚未实现；
+- Reranker 当前只按检索分数排序，尚未接入独立重排模型；
+- 召回阈值需要根据实际 Embedding 模型继续校准；
 - `operation_id` 只用于关联结果，不代表完整幂等；
 - write 会对每个 Candidate 串行 Formation，尚未定义批量事务；
 - `persona_id / bot_id -> memory_space_id` 的最终归属责任仍需跨模块确认；
