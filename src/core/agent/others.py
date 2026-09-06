@@ -1,12 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
-from core.common import Content, OutputRoute, SceneInfo
 
-    
-    
 # AI的，单纯占位
 @dataclass(slots=True)
 class PersonaConfig:
@@ -22,31 +18,3 @@ class PersonaConfig:
         default_factory=lambda: ["尊重隐私", "不伪造事实", "高风险操作先确认"]
     )
     relationship_mode: str = "companion"  # Persona 与用户的关系模式。
-    
-    
-@dataclass(frozen=True, slots=True)
-class BodyOutputOptions:
-    allow_split: bool = True  # 是否允许 Adapter 按平台限制拆分长消息。
-    silent: bool = False  # 是否请求平台采用静默通知方式发送。
-    ephemeral: bool = False  # 是否请求平台发送仅当前用户可见的临时消息。
-    
-    
-@dataclass(slots=True)
-class BodyOutputRequestData:
-    output_id: str  # 一次逻辑输出的唯一 ID，用于关联分片结果。
-    route: OutputRoute  # 选择输出 Adapter 的显式路由。
-    scene: SceneInfo  # 输出目标场景。
-    content: Content  # 待发送的归一化内容。
-    reply_to: OutputReplyInfo | None = None  # 可选回复/引用目标。
-    options: BodyOutputOptions = field(default_factory=BodyOutputOptions)  # 平台无关发送选项。
-    metadata: dict[str, Any] = field(default_factory=dict)  # 展示层所需的非敏感附加数据。
-
-    @property
-    def state(self) -> str:
-        return str(self.metadata.get("presentation", {}).get("state", "idle"))
-    
-    
-@dataclass(frozen=True, slots=True)
-class OutputReplyInfo:
-    platform_event_id: str  # 要回复/引用的平台事件 ID。
-    quote_text: str | None = None  # Adapter 不支持原生引用时可用的显示文本。

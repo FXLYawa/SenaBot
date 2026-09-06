@@ -5,21 +5,21 @@ from __future__ import annotations
 import json
 from uuid import UUID, uuid5
 
-from core.common import ConversationScope
+from core.common import SceneInfo
 
 
 _SESSION_NAMESPACE = UUID("4ef8a6e5-2f0f-5a2a-b19f-87d62ebc4c2d")
 
 
-def conversation_session_id(scope: ConversationScope) -> str:
+def conversation_session_id(scene: SceneInfo) -> str:
     """从稳定交互范围确定性生成 Conversation Session ID。"""
 
     return _session_id(
         "conversation",
-        scope.account_namespace,
-        scope.platform,
-        scope.scene_type.value,
-        scope.scene_id,
+        scene.account_namespace,
+        scene.platform,
+        scene.scene_type.value,
+        scene.scene_id,
     )
 
 

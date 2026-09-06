@@ -9,7 +9,7 @@ from typing import Any
 from core.body.common import ErrorInfo, OperationStatus
 from core.common import (
     Content,
-    ConversationScope,
+    InteractionSignals,
     OutputRoute,
     SceneInfo,
     SceneType,
@@ -31,26 +31,45 @@ class AdapterInboundMessage:
     user_id: str  # Adapter 已解析完成的规范用户 ID，Body 直接信任
     display_name: str
     scene_type: SceneType
-    scene_id: str  # 平台作用域场景 ID，Body 据此绑定会话
+    scene_id: str  # 平台作用域场景 ID。
     content: Content
-    reply_to_message_id: str | None = None  # 本条入站消息回复的平台消息 ID，MVP 暂不参与路由
+    reply_to_message_id: str | None = None  # 入站引用目标，不代表该目标是 Sena。
+    account_namespace: str = "default"
+    scene_name: str = ""
+    is_bot: bool = False
+    interaction: InteractionSignals = field(default_factory=InteractionSignals)
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class BodyInputEventData:
     """发布给 Context/Agent 的标准输入契约；时间与事件元数据由 Envelope 承载。
 
-    Session 身份由 Context 根据 conversation_scope 解析。
+    Session 身份由 Context 根据 scene 解析。
     """
 
-    conversation_scope: ConversationScope
     source: SourceInfo  # 归一化发言者；身份判定请用 source.user_id
-    scene: SceneInfo  # 会话场景，仅供语义判断（私聊/群聊/哪个群），不用于寻址
+    scene: SceneInfo  # 包含平台和账号命名空间的完整场景。
     content: Content
     output_route: OutputRoute
+    interaction: InteractionSignals = field(default_factory=InteractionSignals)
     reply_target_id: str | None = None
     payload_type: str = "body"
     body_data_type: str = "input"
+
+
+@dataclass(frozen=True, slots=True)
+class BodyOutputOptions:
+    """本次输出的交付要求，不决定是否允许发起交互。"""
+
+    silent: bool = False  # 抑制本次发送的通知；Adapter 不支持时应明确拒绝。
+
+
+@dataclass(frozen=True, slots=True)
+class OutputReplyInfo:
+    """平台回复目标及可选的展示引用文本。"""
+
+    platform_event_id: str
+    quote_text: str | None = None
 
 
 @dataclass(slots=True)
@@ -61,7 +80,8 @@ class BodyOutputRequestData:
     route: OutputRoute
     scene: SceneInfo
     content: Content
-    reply_to_message_id: str | None = None
+    reply_to: OutputReplyInfo | None = None
+    options: BodyOutputOptions = field(default_factory=BodyOutputOptions)
     metadata: dict[str, Any] = field(default_factory=dict)  # 展示/附加元数据，如 presentation.emotion/state
     payload_type: str = "body"
     body_data_type: str = "output_request"
@@ -79,13 +99,14 @@ class BodyOutputRequestData:
 
 @dataclass(slots=True)
 class AdapterOutboundMessage:
-    """Body 私有的出站消息；由 BodyRuntime 解析会话路由后填充，平台具体。"""
+    """Body 发给 Adapter 的出站消息，保留回复信息和交付要求。"""
 
     adapter_type: str  # Adapter 实现标识，与 platform 共同构成注册键
     platform: str  # 平台名称
-    scene: SceneInfo  # 从会话路由解析出的平台作用域场景
+    scene: SceneInfo  # 输出目标场景。
     content: Content
-    reply_to_message_id: str | None = None  # 默认回复该会话最近一条入站消息；None 表示普通发送
+    reply_to: OutputReplyInfo | None = None  # None 表示普通发送。
+    options: BodyOutputOptions = field(default_factory=BodyOutputOptions)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
