@@ -123,6 +123,49 @@ class SQLiteContextRepositoryTests(unittest.TestCase):
 
         self.assertEqual(restored, ContextSnapshot(session, 0, ()))
 
+    def test_summary_cannot_exceed_change_latest_sequence(self) -> None:
+        self._save(entries=(self._entry(1),), latest_sequence=1)
+        before = self._repository.load_context(self._session.session_id)
+        with self.assertRaisesRegex(ValueError, "summary exceeds latest_sequence"):
+            self._save(
+                entries=(self._entry(2),),
+                summary=self._summary("invalid", 1, 1, 3),
+                latest_sequence=2,
+            )
+        self.assertEqual(self._repository.load_context(self._session.session_id), before)
+
+    def test_summary_replay_requires_identical_complete_source_list(self) -> None:
+        self._save(entries=tuple(self._entry(i) for i in range(1, 5)), latest_sequence=4)
+        for index in range(1, 5):
+            self._save(
+                summary=self._summary(f"child_{index}", 1, index, index),
+                latest_sequence=4,
+            )
+        parent = self._summary(
+            "parent", 2, 1, 3,
+            source_summary_ids=("child_1", "child_2", "child_3"),
+        )
+        self._save(summary=parent, latest_sequence=4)
+        before = self._repository.load_context(self._session.session_id)
+        self._save(summary=parent, latest_sequence=4)
+        self.assertEqual(self._repository.load_context(self._session.session_id), before)
+        for sources in (
+            ("child_1", "child_2"),
+            ("child_1", "child_2", "child_3", "child_4"),
+            ("child_2", "child_1", "child_3"),
+            ("child_1", "child_2", "child_4"),
+        ):
+            with self.subTest(sources=sources):
+                with self.assertRaisesRegex(ValueError, "summary sources cannot change"):
+                    self._save(
+                        summary=replace(parent, source_summary_ids=sources),
+                        entries=(self._entry(5),),
+                        latest_sequence=5,
+                    )
+                self.assertEqual(
+                    self._repository.load_context(self._session.session_id), before
+                )
+
     def _save(
         self,
         *,

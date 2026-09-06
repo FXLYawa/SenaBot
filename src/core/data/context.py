@@ -45,9 +45,12 @@ class SQLiteContextRepository:
         self._database = database
 
     def load_context(self, session_id: str) -> ContextSnapshot | None:
-        """按 Session ID 恢复当前活动条目和摘要。"""
+        """按 Session ID 恢复Context的活动快照。"""
 
+        # 先提取连接器
         connection = self._database.connection
+
+        # 根据session_id找到这一行
         session_row = connection.execute(
             "SELECT * FROM context_sessions WHERE session_id = ?",
             (session_id,),
@@ -55,18 +58,27 @@ class SQLiteContextRepository:
         if session_row is None:
             return None
 
+        # 找出原始消息
         entry_rows = connection.execute(
             "SELECT entry.* FROM context_entries AS entry "
+            
+            # AND NOT EXISTS表示过滤掉括号里的条件查询出来的结果
             "WHERE entry.session_id = ? AND NOT EXISTS ("
+            # 查询那些已经被summary完全覆盖的entry
             "SELECT 1 FROM context_summaries AS summary "
             "WHERE summary.session_id = entry.session_id AND summary.level = 1 "
             "AND entry.sequence BETWEEN summary.first_sequence AND summary.last_sequence"
             ") ORDER BY entry.sequence",
             (session_id,),
         ).fetchall()
+
+        # 找出summary消息
         summary_rows = connection.execute(
             "SELECT summary.* FROM context_summaries AS summary "
+            
+            # AND NOT EXISTS表示过滤掉括号里的条件查询出来的结果 
             "WHERE summary.session_id = ? AND NOT EXISTS ("
+            # summary有没有被更高层summary吸收
             "SELECT 1 FROM context_summary_sources AS source "
             "WHERE source.child_summary_id = summary.summary_id"
             ") ORDER BY summary.first_sequence, summary.level, summary.last_sequence",
@@ -79,6 +91,7 @@ class SQLiteContextRepository:
             latest_sequence=session_row["latest_sequence"],
             entries=tuple(_entry_from_row(row) for row in entry_rows),
             summaries=tuple(
+                # 根据Source_id找到对应的关系
                 _summary_from_row(row, source_ids.get(row["summary_id"], ()))
                 for row in summary_rows
             ),
@@ -90,7 +103,10 @@ class SQLiteContextRepository:
     ) -> ContextSnapshot:
         """原子保存一次 Context 增量变化。"""
 
+        # 进行一次性校验
         _validate_change(change)
+
+        # 事务性插入,保证session,entry,summary一次插入
         with self._database.transaction() as connection:
             self._save_session(connection, change)
             for entry in change.appended_entries:
@@ -108,8 +124,14 @@ class SQLiteContextRepository:
         connection: sqlite3.Connection,
         change: ContextStateChangedEventData,
     ) -> None:
+        """
+        把 SessionRecord 的“身份字段”作为不可变信息保存，
+        同时只允许生命周期字段和序列号向前更新
+        """
         session = change.session
         scope = session.conversation_scope
+
+        # 把这组字段打包成identity
         identity = (
             session.purpose,
             None if scope is None else scope.platform,
@@ -119,6 +141,8 @@ class SQLiteContextRepository:
             session.work_id,
             format_datetime(session.created_at),
         )
+
+        # 查找数据库中是否已经有重复session_id
         existing = connection.execute(
             "SELECT purpose, platform, account_namespace, scene_type, scene_id, "
             "work_id, created_at FROM context_sessions WHERE session_id = ?",
@@ -126,6 +150,7 @@ class SQLiteContextRepository:
         ).fetchone()
         if existing is not None and tuple(existing) != identity:
             raise ValueError("context session identity cannot change")
+
 
         connection.execute(
             "INSERT INTO context_sessions ("
@@ -150,6 +175,7 @@ class SQLiteContextRepository:
         connection: sqlite3.Connection,
         entry: ContextEntryRecord,
     ) -> None:
+        """幂等的插入一条Context Entry"""
         values = (
             entry.entry_id,
             entry.session_id,
@@ -162,6 +188,7 @@ class SQLiteContextRepository:
             entry.source_event_id,
             format_datetime(entry.created_at),
         )
+        # 查看是否已经存在重复内容,重复则return
         existing = connection.execute(
             "SELECT entry_id, session_id, sequence, entry_type, actor_type, actor_id, "
             "actor_display_name, content_json, source_event_id, created_at "
@@ -185,6 +212,11 @@ class SQLiteContextRepository:
         connection: sqlite3.Connection,
         summary: ContextSummary,
     ) -> None:
+        """
+        幂等保存Summary本身
+        再保存这个Summary对哪些子Summary的引用关系
+        以及这些子Summary的顺序
+        """
         values = (
             summary.summary_id,
             summary.session_id,
@@ -194,6 +226,7 @@ class SQLiteContextRepository:
             summary.text,
             format_datetime(summary.created_at),
         )
+        # 检查是否存在,存在则return
         existing = connection.execute(
             "SELECT summary_id, session_id, level, first_sequence, last_sequence, "
             "text, created_at FROM context_summaries WHERE summary_id = ?",
@@ -202,6 +235,14 @@ class SQLiteContextRepository:
         if existing is not None:
             if tuple(existing) != values:
                 raise ValueError("context summary identity cannot change")
+            sources = connection.execute(
+                "SELECT child_summary_id FROM context_summary_sources "
+                "WHERE parent_summary_id = ? ORDER BY position",
+                (summary.summary_id,),
+            ).fetchall()
+            if tuple(row[0] for row in sources) != summary.source_summary_ids:
+                raise ValueError("context summary sources cannot change")
+            return
         else:
             connection.execute(
                 "INSERT INTO context_summaries ("
@@ -210,18 +251,9 @@ class SQLiteContextRepository:
                 values,
             )
 
+        # 新摘要与完整的有序来源列表在同一事务中写入。
         for position, child_id in enumerate(summary.source_summary_ids):
-            source = connection.execute(
-                "SELECT parent_summary_id, child_summary_id, position "
-                "FROM context_summary_sources "
-                "WHERE parent_summary_id = ? AND child_summary_id = ?",
-                (summary.summary_id, child_id),
-            ).fetchone()
             source_values = (summary.summary_id, child_id, position)
-            if source is not None:
-                if tuple(source) != source_values:
-                    raise ValueError("context summary source order cannot change")
-                continue
             connection.execute(
                 "INSERT INTO context_summary_sources "
                 "(parent_summary_id, child_summary_id, position) VALUES (?, ?, ?)",
@@ -233,10 +265,20 @@ class SQLiteContextRepository:
         connection: sqlite3.Connection,
         summary_rows: list[sqlite3.Row],
     ) -> dict[str, tuple[str, ...]]:
+        """
+        给一批已经查出来的活动 Summary，
+        批量恢复它们各自的 source_summary_ids，
+        并且保持原来的 position 顺序。
+        """
+        # 拿到summary_id
         summary_ids = [row["summary_id"] for row in summary_rows]
+
+        # 如果是空的,直接返回空字典
         if not summary_ids:
             return {}
+        # 进行参数绑定
         placeholders = ",".join("?" for _ in summary_ids)
+        # 读取关系并按位置顺序排列,方便后面按序读取
         rows = connection.execute(
             "SELECT parent_summary_id, child_summary_id FROM context_summary_sources "
             f"WHERE parent_summary_id IN ({placeholders}) "
@@ -244,6 +286,7 @@ class SQLiteContextRepository:
             summary_ids,
         ).fetchall()
         grouped: dict[str, list[str]] = {}
+        # 读取source_summary
         for row in rows:
             grouped.setdefault(row["parent_summary_id"], []).append(
                 row["child_summary_id"]
@@ -252,20 +295,29 @@ class SQLiteContextRepository:
 
 
 def _validate_change(change: ContextStateChangedEventData) -> None:
+    """数据库一致性检查"""
     session_id = change.session.session_id
+
+    # latest_sequence不能是负数
     if change.latest_sequence < 0:
         raise ValueError("latest_sequence must not be negative")
+
+    # 所有新增 Entry 必须属于当前这个 Session
     for entry in change.appended_entries:
         if entry.session_id != session_id:
             raise ValueError("context entry belongs to another session")
         if entry.sequence > change.latest_sequence:
             raise ValueError("context entry exceeds latest_sequence")
+    # summary必须属于同一个session
     summary = change.created_summary
     if summary is not None and summary.session_id != session_id:
         raise ValueError("context summary belongs to another session")
+    if summary is not None and summary.last_sequence > change.latest_sequence:
+        raise ValueError("context summary exceeds latest_sequence")
 
 
 def _content_json(content: Content) -> str:
+    """把 Context 的结构化 Content 稳定序列化成 JSON 存入 SQLite"""
     return json.dumps(
         {
             "content_type": content.content_type.value,
@@ -282,6 +334,7 @@ def _content_json(content: Content) -> str:
 
 
 def _content_from_json(value: str) -> Content:
+    """从JSON中读取出Content"""
     data = json.loads(value)
     return Content(
         content_type=ContentType(data["content_type"]),
@@ -294,6 +347,11 @@ def _content_from_json(value: str) -> Content:
 
 
 def _session_from_row(row: sqlite3.Row) -> SessionRecord:
+    """
+    把 context_sessions 表里的一行 SQLite 数据，
+    恢复成 Context 层的 SessionRecord，
+    并根据 purpose 决定是否重建 ConversationScope。
+    """
     scope = None
     if row["purpose"] == "conversation":
         scope = ConversationScope(
@@ -314,6 +372,8 @@ def _session_from_row(row: sqlite3.Row) -> SessionRecord:
 
 
 def _entry_from_row(row: sqlite3.Row) -> ContextEntryRecord:
+
+    """把数据恢复成ContextEntryRecord"""
     return ContextEntryRecord(
         entry_id=row["entry_id"],
         session_id=row["session_id"],
@@ -334,6 +394,7 @@ def _summary_from_row(
     row: sqlite3.Row,
     source_summary_ids: tuple[str, ...],
 ) -> ContextSummary:
+    """把数据恢复成Summary"""
     return ContextSummary(
         summary_id=row["summary_id"],
         session_id=row["session_id"],
@@ -347,6 +408,7 @@ def _summary_from_row(
 
 
 def _required_datetime(value: str) -> datetime:
+    """把时间字符串解析成datetime"""
     parsed = parse_datetime(value)
     if parsed is None:
         raise ValueError("required datetime must not be null")
