@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from core.data.context import ContextRepositoryProtocol, SQLiteContextRepository
 from core.data.events import DataModule
 from core.data.database import SQLiteDatabase
 from core.data.memory import SQLiteMemoryRepository, SQLiteMemorySpaceRouter
-from core.data.store import InMemoryDataStore
 from core.memory import (
     MemoryRepositoryProtocol,
     MemorySpaceRouterProtocol,
@@ -25,13 +25,13 @@ class DataComponents:
 
 def create_data_components(
     database: SQLiteDatabase,
-    context_store: InMemoryDataStore | None = None,
+    context_repository: ContextRepositoryProtocol | None = None,
 ) -> DataComponents:
-    """创建 SQLite Memory 端口；Context 暂时继续使用进程内 Store。"""
+    """创建 SQLite Data 端口，允许测试替换 Context Repository。"""
 
-    resolved_store = context_store or InMemoryDataStore()
+    resolved_context = context_repository or SQLiteContextRepository(database)
     return DataComponents(
-        module=DataModule(resolved_store),
+        module=DataModule(resolved_context),
         memory_repository=SQLiteMemoryRepository(database),
         memory_spaces=SQLiteMemorySpaceRouter(database),
     )

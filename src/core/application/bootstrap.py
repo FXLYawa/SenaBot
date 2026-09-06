@@ -16,7 +16,11 @@ from core.body import (
     create_body_module,
 )
 from core.context import ContextCompressor, create_context_module
-from core.data import InMemoryDataStore, SQLiteDatabase, create_data_components
+from core.data import (
+    ContextRepositoryProtocol,
+    SQLiteDatabase,
+    create_data_components,
+)
 from core.embedding import EmbeddingProvider
 from core.event import EventBus, EventClient, ModuleEventAPI
 from core.memory import MemoryLLMProtocol, MemoryRecallPolicy, create_memory_module
@@ -82,7 +86,7 @@ class SenaBotDependencies:
     database: SQLiteDatabase
     fallback_model_provider: ModelProvider | None = None
     event_bus: EventBus | None = None
-    data_store: InMemoryDataStore | None = None
+    context_repository: ContextRepositoryProtocol | None = None
     context_compressor: ContextCompressor | None = None
     adapter_factories: tuple[AdapterFactory, ...] | None = None
 
@@ -100,7 +104,7 @@ def create_senabot_app(
     # 2. 装配各个模块
     data_components = create_data_components(
         dependencies.database,
-        dependencies.data_store,
+        dependencies.context_repository,
     )
     body_module = create_body_module(app_config.owner_user_id)
     context_module = create_context_module(

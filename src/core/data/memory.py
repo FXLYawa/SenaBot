@@ -11,26 +11,13 @@ from datetime import UTC, datetime
 from sqlite_vec import serialize_float32
 
 from core.data.database import SQLiteDatabase
+from core.data.serialization import format_datetime, parse_datetime
 from core.memory.models import (
     Entity, Experience, Fact, Knowledge, MemoryItem, MemoryRecallContext,
     MemoryRetrievalCandidate, MemoryScopeKind, MemoryScopeRef,
     MemorySupersedeResult, MemoryWriteEnvelope, Provenance, Understanding,
 )
 from core.memory.protocols import MemoryRetrieverProtocol
-
-
-def _format_datetime(value: datetime | None) -> str | None:
-    """把 Python 的 datetime 转成可以存进 SQLite TEXT 列的字符串。"""
-    if value is None:
-        return None
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError("datetime must be timezone-aware")
-    return value.astimezone(UTC).isoformat(timespec="microseconds")
-
-
-def _parse_datetime(value: str | None) -> datetime | None:
-    """把数据库里的时间字符串重新还原成 Python datetime"""
-    return None if value is None else datetime.fromisoformat(value)
 
 
 def _utc_now() -> datetime:
@@ -49,8 +36,8 @@ def _payload_json(item: MemoryItem) -> str:
                 {"entity_type": value.entity_type, "entity_id": value.entity_id}
                 for value in payload.participants
             ],
-            "occurred_from": _format_datetime(payload.occurred_from),
-            "occurred_to": _format_datetime(payload.occurred_to),
+            "occurred_from": format_datetime(payload.occurred_from),
+            "occurred_to": format_datetime(payload.occurred_to),
         }
     elif isinstance(payload, Understanding):
         data = {"content": payload.content, "evidence_item_ids": list(payload.evidence_item_ids)}
@@ -106,7 +93,7 @@ class SQLiteMemoryRepository:
             #真正更新
             connection.execute(
                 "UPDATE memory_items SET valid_to = ? WHERE item_id = ?",
-                (_format_datetime(valid_to), target_item_id),
+                (format_datetime(valid_to), target_item_id),
             )
         return updated
 
@@ -153,8 +140,8 @@ class SQLiteMemoryRepository:
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 item.item_id, item.memory_space_id, item.domain.value, _payload_json(item),
-                _format_datetime(payload.recorded_at), _format_datetime(valid_from),
-                _format_datetime(valid_to),
+                format_datetime(payload.recorded_at), format_datetime(valid_from),
+                format_datetime(valid_to),
             ),
         )
 
@@ -180,7 +167,7 @@ class SQLiteMemoryRepository:
         cursor = connection.execute(
             "INSERT INTO memory_embeddings (item_id, model, dimensions, created_at) "
             "VALUES (?, ?, ?, ?)",
-            (item.item_id, model, len(vector), _format_datetime(_utc_now())),
+            (item.item_id, model, len(vector), format_datetime(_utc_now())),
         )
         # 写sqlite-vec向量
         connection.execute(
@@ -234,7 +221,7 @@ class SQLiteMemoryRetriever:
         ]
         # 开始准备SQL参数
         scope_sql = ""
-        query_time = _format_datetime(self._clock())
+        query_time = format_datetime(self._clock())
         parameters: list[object] = [
             serialize_float32(query_embedding),
             self._memory_space_id,
@@ -311,22 +298,22 @@ def _item_from_row(connection: sqlite3.Connection, row: sqlite3.Row) -> MemoryIt
             "WHERE item_id = ? ORDER BY position", (item_id,),
         )
     )
-    recorded_at = _parse_datetime(row["recorded_at"])
+    recorded_at = parse_datetime(row["recorded_at"])
     if recorded_at is None:
         raise ValueError("memory recorded_at must not be null")
     domain = row["domain"]
     if domain == "fact":
         payload = Fact(
             content=data["content"], provenance=provenance, recorded_at=recorded_at,
-            valid_from=_parse_datetime(row["valid_from"]),
-            valid_to=_parse_datetime(row["valid_to"]),
+            valid_from=parse_datetime(row["valid_from"]),
+            valid_to=parse_datetime(row["valid_to"]),
         )
     elif domain == "experience":
         payload = Experience(
             summary=data["summary"], provenance=provenance,
             participants=tuple(Entity(**value) for value in data["participants"]),
-            occurred_from=_parse_datetime(data["occurred_from"]),
-            occurred_to=_parse_datetime(data["occurred_to"]), recorded_at=recorded_at,
+            occurred_from=parse_datetime(data["occurred_from"]),
+            occurred_to=parse_datetime(data["occurred_to"]), recorded_at=recorded_at,
         )
     elif domain == "understanding":
         payload = Understanding(
