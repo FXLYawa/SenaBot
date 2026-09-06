@@ -11,7 +11,7 @@ def load_prompt(package: str, name: str) -> str:
     return files(package).joinpath(name).read_text(encoding="utf-8").strip()
 
 
-def render_prompt(package: str, name: str, **values: object) -> str:
+def render_prompt(package: str, name: str, /, **values: object) -> str:
     """使用命名变量渲染提示词，模板字段缺失时立即失败。"""
 
     return load_prompt(package, name).format_map(values)
