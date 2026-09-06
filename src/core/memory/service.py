@@ -1,6 +1,6 @@
+from core.common import utc_now
 import math
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 from .contracts import (
     MemoryQueryRequest,
@@ -230,7 +230,7 @@ class MemoryService:
         )
 
         # 组装form阶段所需要的数据
-        recorded_at = request.recorded_at or datetime.now(UTC)
+        recorded_at = request.recorded_at or utc_now()
 
         # 查找记忆时的记忆边界
         recall_context = build_recall_context(request)

@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from datetime import datetime
 
+from core.common import Content, ContentType, Summary
+
 from .models import MemoryItem
 
 Memory = MemoryItem
@@ -65,41 +67,20 @@ class MemoryWriteMessage:
     # 由什么角色发起
     role: str
 
-    # 具体内容
-    content: str
+    # 保留结构化内容，文本投影由 Memory 内部处理。
+    content: Content
 
     def __post_init__(self) -> None:
         if not self.message_id.strip():
             raise ValueError("message_id must not be blank")
         if not self.role.strip():
             raise ValueError("role must not be blank")
-        if not self.content.strip():
-            raise ValueError("content must not be blank")
-
-
-@dataclass(frozen=True)
-class MemoryWriteSummary:
-    """
-    Memory 写入事件中的公开摘要结构。
-
-    形状对齐 Context 的多级 Summary，但不直接依赖 Context 模块实现。
-    """
-
-    summary_id: str
-    level: int
-    first_sequence: int
-    last_sequence: int
-    text: str
-
-    def __post_init__(self) -> None:
-        if not self.summary_id.strip():
-            raise ValueError("summary_id must not be blank")
-        if self.level < 1:
-            raise ValueError("summary level must be positive")
-        if self.first_sequence < 1 or self.last_sequence < self.first_sequence:
-            raise ValueError("summary sequence range is invalid")
-        if not self.text.strip():
-            raise ValueError("summary text must not be blank")
+        if not isinstance(self.content, Content):
+            raise TypeError("content must be Content")
+        if not self.content.text_value() and not any(
+            segment.type != ContentType.TEXT for segment in self.content.segments
+        ):
+            raise ValueError("content must not be empty")
 
 
 @dataclass(frozen=True)
@@ -130,7 +111,7 @@ class MemoryWriteRequest:
     # Extraction 可以参考但不能直接作为本轮新记忆来源的上下文。
     recent_messages: tuple[MemoryWriteMessage, ...] = ()
     # 对齐 Context 活动前沿中的多级摘要。
-    summaries: tuple[MemoryWriteSummary, ...] = ()
+    summaries: tuple[Summary, ...] = ()
 
     # 本轮写入来源事件。
     # Memory 内部据此构造 Provenance。

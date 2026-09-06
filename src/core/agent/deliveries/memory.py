@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from core.agent.common import SceneInfo, SceneType
 from core.agent.contracts import MemoryQueryEffect, MemoryWriteEffect
-from core.context import ContextActorType, ContextEntryRecord, ContextSummary
+from core.common import SceneInfo, SceneType
+from core.context import ContextActorType, ContextEntryRecord
 from core.event import EventFlow
 from core.memory.contracts import (
     MemoryQueryRequest,
     MemoryWriteMessage,
     MemoryWriteRequest,
-    MemoryWriteSummary,
 )
 
 
@@ -60,11 +59,7 @@ def _request(effect: MemoryEffect) -> MemoryQueryRequest | MemoryWriteRequest:
         recent_messages=tuple(
             _message(entry) for entry in effect.recent_messages
         ),
-        summaries=tuple(
-            _summary(summary)
-            for summary in effect.summaries
-            if summary.text.strip()
-        ),
+        summaries=effect.summaries,
         source_event_id=effect.source_event_id,
         recorded_at=effect.recorded_at,
     )
@@ -87,15 +82,5 @@ def _message(entry: ContextEntryRecord) -> MemoryWriteMessage:
     return MemoryWriteMessage(
         message_id=entry.entry_id,
         role=roles[entry.actor.actor_type],
-        content=entry.text(),
-    )
-
-
-def _summary(summary: ContextSummary) -> MemoryWriteSummary:
-    return MemoryWriteSummary(
-        summary_id=summary.summary_id,
-        level=summary.level,
-        first_sequence=summary.first_sequence,
-        last_sequence=summary.last_sequence,
-        text=summary.text,
+        content=entry.content,
     )

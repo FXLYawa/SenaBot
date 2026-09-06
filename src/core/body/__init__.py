@@ -5,16 +5,8 @@ from core.body.contracts import (
     BodyOutputItemResult,
     BodyOutputRequestData,
     BodyOutputResultEventData,
-    BodyRouteInfo,
-    ConversationScope,
-    Content,
-    ContentSegment,
-    ContentType,
-    SceneInfo,
-    SceneType,
-    SourceInfo,
 )
-from core.body.common import ErrorInfo, OperationStatus, UserRole
+from core.body.common import ErrorInfo, OperationStatus
 from core.body.events import BodyModule
 from core.body.factory import create_body_module
 from core.body.ports import AdapterRegistry, BodyAdapter
@@ -31,16 +23,7 @@ __all__ = [
     "BodyOutputRequestData",
     "BodyOutputResultEventData",
     "BodyRuntime",
-    "BodyRouteInfo",
-    "ConversationScope",
-    "Content",
-    "ContentSegment",
-    "ContentType",
-    "create_body_module",
     "ErrorInfo",
+    "create_body_module",
     "OperationStatus",
-    "SceneInfo",
-    "SceneType",
-    "SourceInfo",
-    "UserRole",
 ]

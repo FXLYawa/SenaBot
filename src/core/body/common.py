@@ -1,4 +1,4 @@
-"""Body 内部复用的最小状态与错误契约；待 core/common 落地后可整体迁移。"""
+"""Body 内部复用的状态与错误契约。"""
 
 from __future__ import annotations
 
@@ -25,13 +25,3 @@ class ErrorInfo:
     message: str
     retryable: bool = False  # 是否允许调用方重试
     details: dict[str, Any] = field(default_factory=dict)  # 额外诊断细节
-
-
-class UserRole(StrEnum):
-    """归一化用户角色枚举，Body 根据属主身份与场景类型解析。"""
-
-    OWNER = "owner"
-    OPERATOR = "operator"
-    PRIVATE_USER = "private_user"
-    GROUP_MEMBER = "group_member"
-    SYSTEM = "system"

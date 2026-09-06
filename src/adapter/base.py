@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 from typing import ClassVar
 
 from core.body import (
@@ -15,6 +14,7 @@ from core.body import (
     BodyOutputItemResult,
     OperationStatus,
 )
+from core.common import utc_now
 
 from adapter.codec import Codec, CodecError
 from adapter.connector import Connector
@@ -107,7 +107,7 @@ class BaseAdapter:
                 BodyOutputItemResult(
                     index=index,
                     status=OperationStatus.COMPLETED,
-                    sent_at=datetime.now(UTC),
+                    sent_at=utc_now(),
                 )
             )
         return results

@@ -6,8 +6,8 @@ import logging
 from dataclasses import dataclass
 from typing import cast
 
+from core.common import ConversationScope
 from core.context.body import BodyInputEventData
-from core.context.common import ConversationScope
 from core.context.contracts import (
     ContextActorRef,
     ContextActorType,

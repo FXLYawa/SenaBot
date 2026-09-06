@@ -8,7 +8,7 @@ from core.agent.others import (
     BodyOutputRequestData,
     OutputReplyInfo,
 )
-from core.agent.common import Content, new_id
+from core.common import Content, new_id
 from core.context import (
     ContextActorRef,
     ContextActorType,

@@ -8,9 +8,8 @@ from typing import Any
 from core.body import (
     AdapterInboundMessage,
     AdapterOutboundMessage,
-    Content,
-    SceneType,
 )
+from core.common import Content, SceneType
 
 from adapter.codec import CodecError
 

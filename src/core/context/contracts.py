@@ -12,8 +12,15 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
-from core.context.body import InteractionSignals, BodyRouteInfo
-from core.context.common import Content, ConversationScope,SceneInfo, SourceInfo
+from core.common import (
+    Content,
+    ConversationScope,
+    InteractionSignals,
+    OutputRoute,
+    SceneInfo,
+    SourceInfo,
+    Summary,
+)
 
 
 
@@ -92,38 +99,13 @@ class ContextEntryRecord:
     
     
 @dataclass(frozen=True, slots=True)
-class ContextSummary:
-    """上下文摘要信息"""
-    
-    summary_id: str # 系统内上下文摘要ID
-    session_id: str # 所属会话ID
-    level: int # 摘要层级，1覆盖原始条目，更高级摘要覆盖下一级摘要
-    first_sequence: int # 覆盖的第一条原始 Context Entry 序号（含）
-    last_sequence: int # 覆盖的最后一条原始 Context Entry 序号（含）
-    text: str # 语义摘要
-    created_at: datetime # 摘要产生时间
-    source_summary_ids: tuple[str, ...] = () # 参与本次摘要的原始摘要 ID 列表
-    
-    def __post_init__(self) -> None:
-        """验证摘要的层级和覆盖范围是否合法"""
-        if self.level < 1:
-            raise ValueError("summary level must be positive")
-        if self.first_sequence < 1 or self.last_sequence < self.first_sequence:
-            raise ValueError("summary sequence range is invalid")
-        if self.level == 1 and self.source_summary_ids:
-            raise ValueError("level-one summary cannot contain child summaries")
-        if self.level > 1 and not self.source_summary_ids:
-            raise ValueError("higher-level summary requires child summaries")
-    
-    
-@dataclass(frozen=True, slots=True)
 class ContextSnapshot:
     """会话上下文快照"""
     
     session: SessionRecord # 会话记录
     latest_sequence: int # 上下文条目最新序列号
     entries: tuple[ContextEntryRecord, ...] # 上下文条目记录
-    summaries: tuple[ContextSummary, ...] = ()  # 未被更高层覆盖的活动摘要
+    summaries: tuple[Summary, ...] = ()  # 未被更高层覆盖的活动摘要
     
     
 @dataclass(frozen=True, slots=True)
@@ -174,8 +156,8 @@ class ContextPreparedEventData:
     trigger_event_id: str # 触发上下文准备的事件标识
     trigger_entry_id: str # 触发上下文准备的条目标识
     entries: tuple[ContextEntryRecord, ...] # 上下文条目记录
-    summaries: tuple[ContextSummary, ...]  # 按时间排列、可逐层展开的活动摘要
-    output_route: BodyRouteInfo  # 长期任务恢复后仍可使用的 Body 输出路由。
+    summaries: tuple[Summary, ...]  # 按时间排列、可逐层展开的活动摘要
+    output_route: OutputRoute  # 长期任务恢复后仍可使用的输出路由。
     source: SourceInfo  # 原始主体信息
     scene: SceneInfo  # 原始场景信息
     interaction: InteractionSignals # 交互信号
@@ -248,8 +230,8 @@ class ContextHistoryRequestData:
 class ContextHistoryLevel:
     """摘要展开的内容; 高层摘要返回子摘要, Level 1 返回原始条目"""
     
-    summary: ContextSummary  # 本次被展开的父摘要。
-    summaries: tuple[ContextSummary, ...] = ()  # level - 1 的直接子摘要。
+    summary: Summary  # 本次被展开的父摘要。
+    summaries: tuple[Summary, ...] = ()  # level - 1 的直接子摘要。
     entries: tuple[ContextEntryRecord, ...] = ()  # Level 1 覆盖的原始条目。
 
     def __post_init__(self) -> None:
@@ -282,14 +264,14 @@ class ContextStateChangedEventData:
     session: SessionRecord # 会话记录
     latest_sequence: int # 上下文条目最新序列号
     appended_entries: tuple[ContextEntryRecord, ...] # 新增的上下文条目记录
-    created_summary: ContextSummary | None = None # 本次新建的上下文摘要
+    created_summary: Summary | None = None # 本次新建的上下文摘要
     
     @classmethod
     def from_snapshot(
         cls,
         snapshot: ContextSnapshot,
         appended_entries: tuple[ContextEntryRecord, ...] = (),
-        created_summary: ContextSummary | None = None,
+        created_summary: Summary | None = None,
     ) -> ContextStateChangedEventData:
         """从当前只读快照构造可持久化的状态变化事实。"""
 
