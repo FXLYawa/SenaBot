@@ -5,8 +5,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from core.agent.others import PersonaConfig
-from core.agent.common import render_prompt
-from core.model import ModelMessage, ModelProvider, ModelResponse, ModelRequest
+from core.model import (
+    ModelMessage,
+    ModelProvider,
+    ModelRequest,
+    ModelResponse,
+    render_prompt,
+    require_complete_response,
+)
 
 
 class PersonaResponder:
@@ -18,11 +24,9 @@ class PersonaResponder:
     def __init__(
         self,
         provider: ModelProvider,
-        fallback_provider: ModelProvider,
         config: PersonaConfig,
     ) -> None:
         self._provider = provider
-        self._fallback_provider = fallback_provider
         self._config = config
 
     @property
@@ -49,10 +53,9 @@ class PersonaResponder:
             (ModelMessage("system", self._build_system_prompt()), *messages),
             temperature=temperature,
         )
-        try:
-            return await self._provider.generate(request)
-        except Exception:
-            return await self._fallback_provider.generate(request)
+        response = await self._provider.generate(request)
+        require_complete_response(response)
+        return response
 
     def _build_system_prompt(self) -> str:
         """把 Persona 配置渲染为 Agent 唯一的角色系统提示。"""

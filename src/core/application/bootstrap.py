@@ -21,10 +21,9 @@ from core.data import (
     SQLiteDatabase,
     create_data_components,
 )
-from core.embedding import EmbeddingProvider
 from core.event import EventBus, EventClient, ModuleEventAPI
-from core.memory import MemoryLLMProtocol, MemoryRecallPolicy, create_memory_module
-from core.model import ModelProvider
+from core.memory import MemoryRecallPolicy, create_memory_module
+from core.model import EmbeddingProvider, ModelProvider
 
 
 __all__ = [
@@ -81,7 +80,7 @@ class SenaBotDependencies:
     """组合根的显式替换点，供实际基础设施和测试实现注入"""
 
     model_provider: ModelProvider
-    memory_llm: MemoryLLMProtocol
+    memory_model_provider: ModelProvider
     embedding_provider: EmbeddingProvider
     database: SQLiteDatabase
     fallback_model_provider: ModelProvider | None = None
@@ -113,7 +112,7 @@ def create_senabot_app(
         enable_compression=app_config.enable_context_compression,
     )
     memory_module = create_memory_module(
-        dependencies.memory_llm,
+        dependencies.memory_model_provider,
         dependencies.embedding_provider,
         data_components.memory_repository,
         data_components.memory_spaces,
