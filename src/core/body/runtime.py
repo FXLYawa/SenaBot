@@ -16,7 +16,6 @@ from core.body.contracts import (
 from core.body.ports import AdapterRegistry
 from core.common import (
     ContentType,
-    ConversationScope,
     OutputRoute,
     SceneInfo,
     SourceInfo,
@@ -35,29 +34,30 @@ class BodyRuntime:
     """负责平台输入归一化、去重与输出 Adapter 路由；不持有 Session。"""
 
     def __init__(self, owner_user_id: str, adapters: AdapterRegistry) -> None:
-        """保存属主配置，并初始化输入去重、会话路由与输出结果缓存。"""
+        """保存属主配置，并初始化输入去重与输出结果缓存。"""
         self.owner_user_id = owner_user_id
         self.adapters = adapters
-        # 输入去重键：(adapter_type, platform, message_id) → None；只保留最近 _MAX_TRACKED 条。
-        self._seen_input_keys: OrderedDict[tuple[str, str, str], None] = OrderedDict()
+        # 同一场景内去重，避免不同账号或场景中相同的消息 ID 互相影响。
+        self._seen_input_keys: OrderedDict[tuple[str, SceneInfo, str], None] = OrderedDict()
         # 输出结果缓存：output_id → 最近一次发送结果，用于幂等返回；只保留最近 _MAX_TRACKED 条。
         self._output_result_cache: OrderedDict[str, BodyOutputResultEventData] = OrderedDict()
 
     async def handle_adapter_input(
         self, message: AdapterInboundMessage
     ) -> BodyInputEventData | None:
-        """过滤空输入并按平台消息 ID 去重，再绑定会话并生成标准 Body 输入。"""
+        """过滤空输入，归一化后按场景内消息 ID 去重。"""
 
         # 无文本且无非文本段（图片/语音等）时视为空输入。
         if not message.content.text_value() and not any(
             segment.type != ContentType.TEXT for segment in message.content.segments
         ):
             return None
-        input_key = (message.adapter_type, message.platform, message.message_id)
+        payload = self._normalize(message)
+        input_key = (message.adapter_type, payload.scene, message.message_id)
         if input_key in self._seen_input_keys:
             return None
         self._mark_seen(input_key)
-        return self._normalize(message)
+        return payload
 
     async def handle_output_request(
         self, request: BodyOutputRequestData
@@ -103,21 +103,24 @@ class BodyRuntime:
         """把 Adapter 入站消息转换为不含 Session 的标准 Body 输入。"""
         # 角色只依据可信 Adapter 身份和配置解析，绝不从消息正文推断。
         role = self._resolve_role(message.user_id, message.scene_type.value)
-        scene = SceneInfo(message.scene_type, message.scene_id)
+        scene = SceneInfo(
+            platform=message.platform,
+            scene_type=message.scene_type,
+            scene_id=message.scene_id,
+            account_namespace=message.account_namespace,
+            scene_name=message.scene_name,
+        )
         return BodyInputEventData(
-            conversation_scope=ConversationScope(
-                message.platform,
-                message.scene_type,
-                message.scene_id,
-            ),
             source=SourceInfo(
                 platform_user_id=message.user_id,
                 display_name=message.display_name,
+                is_bot=message.is_bot,
                 principal_id=message.user_id,
                 role=role,
             ),
             scene=scene,
             content=message.content,
+            interaction=message.interaction,
             output_route=OutputRoute(
                 message.adapter_type,
                 message.platform,
@@ -144,12 +147,13 @@ class BodyRuntime:
                 platform=request.route.platform,
                 scene=request.scene,
                 content=request.content,
-                reply_to_message_id=request.reply_to_message_id,
+                reply_to=request.reply_to,
+                options=request.options,
                 metadata=dict(request.metadata),
             )
         )
 
-    def _mark_seen(self, input_key: tuple[str, str, str]) -> None:
+    def _mark_seen(self, input_key: tuple[str, SceneInfo, str]) -> None:
         """记录输入去重键，并清理超过上限的最旧记录。"""
         self._seen_input_keys[input_key] = None
         self._seen_input_keys.move_to_end(input_key)

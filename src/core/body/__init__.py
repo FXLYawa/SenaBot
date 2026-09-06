@@ -3,8 +3,10 @@ from core.body.contracts import (
     AdapterOutboundMessage,
     BodyInputEventData,
     BodyOutputItemResult,
+    BodyOutputOptions,
     BodyOutputRequestData,
     BodyOutputResultEventData,
+    OutputReplyInfo,
 )
 from core.body.common import ErrorInfo, OperationStatus
 from core.body.events import BodyModule
@@ -20,10 +22,12 @@ __all__ = [
     "BodyInputEventData",
     "BodyModule",
     "BodyOutputItemResult",
+    "BodyOutputOptions",
     "BodyOutputRequestData",
     "BodyOutputResultEventData",
     "BodyRuntime",
     "ErrorInfo",
     "create_body_module",
     "OperationStatus",
+    "OutputReplyInfo",
 ]

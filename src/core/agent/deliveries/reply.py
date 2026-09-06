@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from core.agent.contracts import ReplyEffect
-from core.agent.others import (
+from core.body import (
     BodyOutputOptions,
     BodyOutputRequestData,
     OutputReplyInfo,

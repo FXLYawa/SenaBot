@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core.common import ConversationScope, utc_now
+from core.common import SceneInfo, utc_now
 from core.context.compression import CompactionRequestData
 from core.context.contracts import (
     ContextEntryDraft,
@@ -26,16 +26,16 @@ class ContextStateStore:
         """检查指定会话是否已加载"""
         return session_id in self._sessions
         
-    def initialize_conversation(self, scope: ConversationScope) -> None:
+    def initialize_conversation(self, scene: SceneInfo) -> None:
         """初始化尚不存在的 Conversation Session"""
 
-        session_id = conversation_session_id(scope)
+        session_id = conversation_session_id(scene)
         if session_id in self._sessions:
             return
         self._sessions[session_id] = self._new_session(
             session_id,
             purpose="conversation",
-            conversation_scope=scope,
+            scene=scene,
         )
 
     def resolve_work(
@@ -79,15 +79,15 @@ class ContextStateStore:
     def install_conversation_snapshot(
         self,
         snapshot: ContextSnapshot,
-        scope: ConversationScope,
+        scene: SceneInfo,
     ) -> bool:
         """校验并安装 Data 返回的 Conversation Session 快照, 用于重启恢复"""
 
         session = snapshot.session
         if (
-            session.session_id != conversation_session_id(scope)
+            session.session_id != conversation_session_id(scene)
             or session.purpose != "conversation"
-            or session.conversation_scope != scope
+            or session.scene != scene
         ):
             return False
         return self._install_snapshot(snapshot)
@@ -108,7 +108,7 @@ class ContextStateStore:
             != work_session_id(normalized_purpose, normalized_work_id)
             or session.purpose != normalized_purpose
             or session.work_id != normalized_work_id
-            or session.conversation_scope is not None
+            or session.scene is not None
         ):
             return False
         return self._install_snapshot(snapshot)
@@ -138,7 +138,7 @@ class ContextStateStore:
     def _new_session(
         session_id: str,
         purpose: str,
-        conversation_scope: ConversationScope | None = None,
+        scene: SceneInfo | None = None,
         work_id: str | None = None,
     ) -> SessionState:
         """构造一个已经解析稳定身份的新 Session 状态。"""
@@ -150,7 +150,7 @@ class ContextStateStore:
                 created_at=now,
                 updated_at=now,
                 purpose=purpose,
-                conversation_scope=conversation_scope,
+                scene=scene,
                 work_id=work_id,
             ),
             0,

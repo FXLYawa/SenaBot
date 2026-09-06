@@ -6,8 +6,8 @@ import logging
 from dataclasses import dataclass
 from typing import cast
 
-from core.common import ConversationScope
-from core.context.body import BodyInputEventData
+from core.body import BodyInputEventData
+from core.common import SceneInfo
 from core.context.contracts import (
     ContextActorRef,
     ContextActorType,
@@ -40,7 +40,7 @@ class _PendingInput:
 class _PendingRestore:
     """同一 Conversation Session 共享的一次恢复及有序输入批次。"""
 
-    scope: ConversationScope
+    scene: SceneInfo
     inputs: list[_PendingInput]
 
 
@@ -65,7 +65,7 @@ class ConversationFlow:
 
         # 解析输入所属的 Conversation Session
         payload: BodyInputEventData = flow.payload
-        session_id = conversation_session_id(payload.conversation_scope)
+        session_id = conversation_session_id(payload.scene)
         if self._store.is_loaded(session_id):
             # Session 已加载，直接追加输入并发布 Agent 工作窗口
             self._accept(flow, payload, session_id)
@@ -76,9 +76,9 @@ class ConversationFlow:
         if pending is not None:
             pending.inputs.append(pending_input)
             return
-        # 首次请求恢复时，记录 ConversationScope 以便后续校验恢复结果，并发起恢复请求
+        # 首次请求恢复时，记录 SceneInfo 以便后续校验恢复结果，并发起恢复请求
         self._restoring[session_id] = _PendingRestore(
-            payload.conversation_scope,
+            payload.scene,
             [pending_input],
         )
         flow.emit(
@@ -96,7 +96,7 @@ class ConversationFlow:
             return
 
         # 校验恢复结果并应用到 Conversation Session，返回错误则通知所有调用方
-        error = self._apply_restore_result(result, pending.scope)
+        error = self._apply_restore_result(result, pending.scene)
         if error is not None:
             await self._fail_pending(pending, result.session_id, error)
             return
@@ -105,7 +105,7 @@ class ConversationFlow:
     def _apply_restore_result(
         self,
         result: ContextRestoreResultEventData,
-        scope: ConversationScope,
+        scene: SceneInfo,
     ) -> ContextErrorInfo | None:
         """校验并应用 Data 恢复结果，不发布后续事件。"""
 
@@ -116,15 +116,15 @@ class ConversationFlow:
             if result.status == ContextRestoreStatus.COMPLETED:
                 installed = self._store.install_conversation_snapshot(
                     cast(ContextSnapshot, result.snapshot),
-                    scope,
+                    scene,
                 )
                 if not installed:
                     return ContextErrorInfo(
                         "context_restore_invalid",
-                        "Stored context does not match the requested conversation scope.",
+                        "Stored context does not match the requested conversation scene.",
                     )
             else:
-                self._store.initialize_conversation(scope)
+                self._store.initialize_conversation(scene)
         return None
 
     async def _resume_pending_inputs(
@@ -225,7 +225,7 @@ class ConversationFlow:
             summaries=result.snapshot.summaries,
             output_route=payload.output_route,
             source=payload.source,
-            scene=payload.conversation_scope.scene,
+            scene=payload.scene,
             interaction=payload.interaction,
             reply_to_message_id=payload.reply_target_id,
         )

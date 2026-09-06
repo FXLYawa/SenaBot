@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 
@@ -45,39 +45,27 @@ class SourceInfo:
 
 @dataclass(frozen=True, slots=True)
 class SceneInfo:
-    """平台内的场景定位；展示名称不参与身份或权限判断。"""
-
-    scene_type: SceneType
-    scene_id: str
-    scene_name: str = ""
-
-    @property
-    def display_name(self) -> str:
-        return self.scene_name
-
-
-@dataclass(frozen=True, slots=True)
-class ConversationScope:
-    """稳定对话流的外部身份，供 Context 解析 Session。"""
+    """交互场景的完整身份与展示信息，供 Context 解析 Session。"""
 
     platform: str
     scene_type: SceneType
     scene_id: str
     account_namespace: str = "default"
+    scene_name: str = field(default="", compare=False)  # 名称变化不改变身份或哈希。
 
     def __post_init__(self) -> None:
         platform = self.platform.strip().casefold()
         scene_id = self.scene_id.strip()
         account_namespace = self.account_namespace.strip().casefold()
         if not platform or not scene_id or not account_namespace:
-            raise ValueError("conversation scope fields must not be empty")
+            raise ValueError("scene identity fields must not be empty")
         object.__setattr__(self, "platform", platform)
         object.__setattr__(self, "scene_id", scene_id)
         object.__setattr__(self, "account_namespace", account_namespace)
 
     @property
-    def scene(self) -> SceneInfo:
-        return SceneInfo(self.scene_type, self.scene_id)
+    def display_name(self) -> str:
+        return self.scene_name
 
 
 @dataclass(frozen=True, slots=True)

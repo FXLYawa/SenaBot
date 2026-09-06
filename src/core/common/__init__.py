@@ -4,7 +4,6 @@ from core.common.clock import utc_now
 from core.common.content import Content, ContentSegment, ContentType
 from core.common.identifiers import new_id
 from core.common.interaction import (
-    ConversationScope,
     InteractionSignals,
     OutputRoute,
     SceneInfo,
@@ -18,7 +17,6 @@ __all__ = [
     "Content",
     "ContentSegment",
     "ContentType",
-    "ConversationScope",
     "InteractionSignals",
     "OutputRoute",
     "SceneInfo",

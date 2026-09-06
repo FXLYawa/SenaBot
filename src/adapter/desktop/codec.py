@@ -49,10 +49,17 @@ class DesktopCodec:
 
     def encode(self, outbound: AdapterOutboundMessage) -> list[str]:
         """把 Desktop 出站文本消息编码为完整 JSON 字符串。"""
+        # 当前协议仅支持文本和回复目标，不能静默丢弃调用方的交付要求。
+        if outbound.options.silent:
+            raise CodecError("Desktop does not support silent delivery.")
+        if outbound.reply_to is not None and outbound.reply_to.quote_text is not None:
+            raise CodecError("Desktop does not support quote text.")
         payload = {
             "type": "message",
             "text": outbound.content.text_value(),
-            "reply_to": outbound.reply_to_message_id,
+            "reply_to": outbound.reply_to.platform_event_id
+            if outbound.reply_to is not None
+            else None,
         }
         return [json.dumps(payload, ensure_ascii=False, separators=(",", ":"))]
 

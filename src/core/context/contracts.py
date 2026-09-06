@@ -2,7 +2,7 @@
 
 本文件只描述跨组件传递的数据形状
 Session 是隔离工作边界; 每个 Session 始终对应一个 Context. Body 只提供稳定的
-ConversationScope, Context 统一解析普通对话和内部 Work Session 的身份。
+SceneInfo, Context 统一解析普通对话和内部 Work Session 的身份。
 """
 
 
@@ -14,7 +14,6 @@ from enum import StrEnum
 
 from core.common import (
     Content,
-    ConversationScope,
     InteractionSignals,
     OutputRoute,
     SceneInfo,
@@ -61,7 +60,7 @@ class SessionRecord:
     closed_at: datetime | None = None # 会话关闭时间
     purpose: str = "conversation" # 会话目的，默认是对话
     # 下面几个主要用于生成session_id时的来源信息，方便追溯和对应
-    conversation_scope: ConversationScope | None = None # session 对应的 conversation 来源
+    scene: SceneInfo | None = None # session 对应的 conversation 来源
     work_id: str | None = None # Session 对应的work agent id
     
     @property
@@ -212,7 +211,7 @@ class ContextErrorInfo:
 class ContextInputFailedEventData:
     """输入因 Session 恢复或状态错误而未进入 Context。"""
 
-    session_id: str  # 根据 ConversationScope 确定性解析的 Session ID。
+    session_id: str  # 根据 SceneInfo 确定性解析的 Session ID。
     trigger_event_id: str  # 未被接纳的事件 ID。
     error: ContextErrorInfo  # 可观察的结构化失败，不包含完整输入正文。
 
