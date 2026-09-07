@@ -17,7 +17,7 @@ def create_context_module(
 ) -> ContextModule:
     """创建 Context 状态、窗口策略和可选压缩能力。"""
 
-    resolved_compressor = compressor
+    resolved_compressor = compressor if enable_compression else None
     if resolved_compressor is None and enable_compression:
         resolved_compressor = LLMCompressor(model_provider)
     return ContextModule(

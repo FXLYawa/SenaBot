@@ -6,7 +6,7 @@ import asyncio
 import unittest
 from datetime import UTC, datetime
 
-from core.context.common import Content
+from core.common import Content
 from core.context.contracts import (
     ContextActorRef,
     ContextActorType,
@@ -18,6 +18,7 @@ from core.context.contracts import (
     ContextStateChangedEventData,
     SessionRecord,
 )
+from core.common import Summary
 from core.data import DataModule, InMemoryDataStore
 from core.event import EventBus, EventClient, EventFlow, ModuleEventAPI
 

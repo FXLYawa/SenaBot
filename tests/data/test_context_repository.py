@@ -8,11 +8,11 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from core.context.common import (
+from core.common import (
     Content,
     ContentSegment,
     ContentType,
-    ConversationScope,
+    SceneInfo,
     SceneType,
 )
 from core.context.contracts import (
@@ -21,9 +21,9 @@ from core.context.contracts import (
     ContextEntryRecord,
     ContextSnapshot,
     ContextStateChangedEventData,
-    ContextSummary,
     SessionRecord,
 )
+from core.common import Summary
 from core.data import SQLiteContextRepository, SQLiteDatabase
 
 
@@ -38,7 +38,7 @@ class SQLiteContextRepositoryTests(unittest.TestCase):
             session_id="session_conversation",
             created_at=self._now,
             updated_at=self._now,
-            conversation_scope=ConversationScope(
+            scene=SceneInfo(
                 platform="desktop",
                 scene_type=SceneType.PRIVATE,
                 scene_id="owner",
@@ -170,7 +170,7 @@ class SQLiteContextRepositoryTests(unittest.TestCase):
         self,
         *,
         entries: tuple[ContextEntryRecord, ...] = (),
-        summary: ContextSummary | None = None,
+        summary: Summary | None = None,
         latest_sequence: int,
     ) -> None:
         session = replace(
@@ -212,8 +212,8 @@ class SQLiteContextRepositoryTests(unittest.TestCase):
         last_sequence: int,
         *,
         source_summary_ids: tuple[str, ...] = (),
-    ) -> ContextSummary:
-        return ContextSummary(
+    ) -> Summary:
+        return Summary(
             summary_id=summary_id,
             session_id=self._session.session_id,
             level=level,

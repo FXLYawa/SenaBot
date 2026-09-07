@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from core.agent.common import render_prompt
 from core.agent.contracts import (
     AgentObservation,
     AgentObservationType,
@@ -18,7 +17,7 @@ from core.common import Summary, new_id
 from core.context import ContextEntryType, ContextPreparedEventData
 from core.memory.contracts import MemoryQueryFailedEventData, MemoryQueryResult
 from core.memory.models import Experience, Fact, Knowledge, MemoryItem, Understanding
-from core.model import ModelMessage
+from core.model import ModelMessage, render_prompt
 
 
 class ConversationBehavior:

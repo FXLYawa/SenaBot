@@ -12,7 +12,7 @@ from openai import (
 
 import adapter.model.openai_embedding as module
 from config import load_model_config
-from core.embedding import EmbeddingRequest, EmbeddingResponse
+from core.model import EmbeddingRequest, EmbeddingResponse
 from core.model import (
     ModelAuthError, ModelError, ModelRateLimitError, ModelRequestError,
     ModelResponseError, ModelTimeoutError, ModelUnavailableError,

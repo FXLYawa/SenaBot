@@ -1,4 +1,4 @@
-from core.embedding import EmbeddingProvider, EmbeddingRequest
+from core.model import EmbeddingProvider, EmbeddingRequest
 from core.memory.models import Experience, MemoryIndexEmbedding, MemoryItem
 
 

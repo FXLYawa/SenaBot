@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from core.memory.contracts import MemoryQueryRequest
-from core.embedding import EmbeddingRequest, EmbeddingResponse
+from core.model import EmbeddingRequest, EmbeddingResponse
 from core.memory.embedding import ProviderMemoryEmbedder, SimpleMemoryEmbedder
 from core.memory.models import (
     Fact,

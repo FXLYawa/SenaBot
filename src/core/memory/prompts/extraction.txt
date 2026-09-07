@@ -1,4 +1,3 @@
-MEMORY_EXTRACTION_PROMPT = """
 你负责从当前的新消息中提取可能值得长期保存的用户信息。
 
 历史摘要和最近消息只用于帮助理解当前消息，
@@ -31,4 +30,3 @@ MEMORY_EXTRACTION_PROMPT = """
 
 当前新消息：
 {new_messages}
-""".strip()

@@ -1,9 +1,1 @@
-from .extraction import MEMORY_EXTRACTION_PROMPT
-from .materialization import MEMORY_MATERIALIZATION_PROMPT
-from .review import MEMORY_REVIEW_PROMPT
-
-__all__ = [
-    "MEMORY_EXTRACTION_PROMPT",
-    "MEMORY_MATERIALIZATION_PROMPT",
-    "MEMORY_REVIEW_PROMPT",
-]
+"""Memory 提取、成形与审查使用的文本模板资源。"""

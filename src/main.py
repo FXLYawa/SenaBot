@@ -6,33 +6,18 @@ import asyncio
 from contextlib import AsyncExitStack
 from pathlib import Path
 
-from adapter.model.openai_compatible import OpenAICompatibleProvider
-from adapter.model.openai_embedding import OpenAICompatibleEmbeddingProvider
-from config import load_model_config, load_reranker_config
+from adapter.model import OpenAICompatibleEmbeddingProvider, OpenAICompatibleProvider
 from adapter.model.reranker import MemoryReranker
+from config import load_model_config, load_reranker_config
 from core.application.bootstrap import (
     SenaBotConfig,
     SenaBotDependencies,
     create_senabot_app,
 )
 from core.data import SQLiteDatabase
-from core.model import ModelMessage, ModelProvider, ModelRequest
 
 
 __all__ = ["main", "run"]
-
-
-class MemoryLLMAdapter:
-    """让 Memory 的字符串接口复用通用模型 Provider。"""
-
-    def __init__(self, provider: ModelProvider) -> None:
-        self._provider = provider
-
-    async def generate(self, prompt: str) -> str:
-        response = await self._provider.generate(
-            ModelRequest(messages=(ModelMessage(role="user", content=prompt),))
-        )
-        return response.text
 
 
 async def run(
@@ -64,7 +49,9 @@ async def run_from_config() -> None:
     model_config = load_model_config(project_root / "config" / "model.toml")
     embedding_config = load_model_config(project_root / "config" / "embedding.toml")
     reranker_path = project_root / "config" / "reranker.toml"
-    reranker_config = load_reranker_config(reranker_path) if reranker_path.exists() else None
+    reranker_config = (
+        load_reranker_config(reranker_path) if reranker_path.exists() else None
+    )
     data_directory = project_root / "data"
     data_directory.mkdir(parents=True, exist_ok=True)
     async with AsyncExitStack() as resources:
@@ -98,7 +85,7 @@ async def run_from_config() -> None:
         await run(
             SenaBotDependencies(
                 model_provider=provider,
-                memory_llm=MemoryLLMAdapter(provider),
+                memory_model_provider=provider,
                 embedding_provider=embedding_provider,
                 database=database,
                 memory_reranker=reranker,

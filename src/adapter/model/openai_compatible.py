@@ -42,6 +42,8 @@ class OpenAICompatibleProvider:
             api_key=api_key,
             base_url=base_url,
             timeout=timeout_seconds,
+            # 重试与备用模型切换由显式调用策略决定。
+            max_retries=0,
         )
 
     def _build_request(self, request: ModelRequest) -> dict[str, Any]:
@@ -92,7 +94,7 @@ class OpenAICompatibleProvider:
         return ModelResponse(
             text=content,
             model=model,
-            finish_reason=getattr(first_choice, "finish_reason", None) or "stop",
+            finish_reason=getattr(first_choice, "finish_reason", None) or "unknown",
             usage=usage,
         )
 

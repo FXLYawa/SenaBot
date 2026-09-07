@@ -18,13 +18,13 @@ from core.body import (
     BodyInputEventData,
     BodyOutputItemResult,
     BodyOutputRequestData,
-    Content,
     OperationStatus,
-    SceneType,
+    OutputReplyInfo,
 )
+from core.common import Content, SceneType
 from core.event import EventBus, EventClient
 from core.data import SQLiteDatabase
-from core.embedding import EmbeddingRequest, EmbeddingResponse
+from core.model import EmbeddingRequest, EmbeddingResponse
 from core.model import ModelRequest, ModelResponse
 
 
@@ -98,7 +98,7 @@ class BodyBootstrapTests(unittest.IsolatedAsyncioTestCase):
 
         dependencies = SenaBotDependencies(
             model_provider=StubModelProvider(),
-            memory_llm=StubMemoryLLM(),
+            memory_model_provider=StubModelProvider(),
             embedding_provider=StubEmbeddingProvider(),
             database=SQLiteDatabase(":memory:"),
             event_bus=bus,
@@ -149,14 +149,14 @@ class BodyBootstrapTests(unittest.IsolatedAsyncioTestCase):
                     route=inbound.output_route,
                     scene=inbound.scene,
                     content=Content.from_text("world"),
-                    reply_to_message_id=inbound.reply_target_id,
+                    reply_to=OutputReplyInfo(inbound.reply_target_id),
                 ),
             )
             await asyncio.wait_for(adapter.sent_event.wait(), timeout=2)
 
             self.assertEqual(len(adapter.sent), 1)
             self.assertEqual(adapter.sent[0].content.text_value(), "world")
-            self.assertEqual(adapter.sent[0].reply_to_message_id, "message-1")
+            self.assertEqual(adapter.sent[0].reply_to.platform_event_id, "message-1")
         finally:
             await app.stop()
 

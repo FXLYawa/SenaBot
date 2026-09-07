@@ -120,7 +120,7 @@ def test_parse_response_maps_first_choice_and_usage(
     )
 
 
-def test_parse_response_defaults_finish_reason_and_allows_missing_usage(
+def test_parse_response_preserves_unknown_finish_reason_and_allows_missing_usage(
     provider: OpenAICompatibleProvider,
 ) -> None:
     raw_response = SimpleNamespace(
@@ -136,7 +136,7 @@ def test_parse_response_defaults_finish_reason_and_allows_missing_usage(
 
     response = provider._parse_response(raw_response)
 
-    assert response.finish_reason == "stop"
+    assert response.finish_reason == "unknown"
     assert response.usage is None
 
 

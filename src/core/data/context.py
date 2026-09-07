@@ -7,12 +7,13 @@ import sqlite3
 from datetime import datetime
 from typing import Protocol
 
-from core.context.common import (
+from core.common import (
     Content,
     ContentSegment,
     ContentType,
-    ConversationScope,
+    SceneInfo,
     SceneType,
+    Summary,
 )
 from core.context.contracts import (
     ContextActorRef,
@@ -20,7 +21,6 @@ from core.context.contracts import (
     ContextEntryRecord,
     ContextSnapshot,
     ContextStateChangedEventData,
-    ContextSummary,
     SessionRecord,
 )
 from core.data.database import SQLiteDatabase
@@ -129,7 +129,7 @@ class SQLiteContextRepository:
         同时只允许生命周期字段和序列号向前更新
         """
         session = change.session
-        scope = session.conversation_scope
+        scope = session.scene
 
         # 把这组字段打包成identity
         identity = (
@@ -210,7 +210,7 @@ class SQLiteContextRepository:
     @staticmethod
     def _insert_summary(
         connection: sqlite3.Connection,
-        summary: ContextSummary,
+        summary: Summary,
     ) -> None:
         """
         幂等保存Summary本身
@@ -350,11 +350,11 @@ def _session_from_row(row: sqlite3.Row) -> SessionRecord:
     """
     把 context_sessions 表里的一行 SQLite 数据，
     恢复成 Context 层的 SessionRecord，
-    并根据 purpose 决定是否重建 ConversationScope。
+    并根据 purpose 决定是否重建 SceneInfo。
     """
     scope = None
     if row["purpose"] == "conversation":
-        scope = ConversationScope(
+        scope = SceneInfo(
             platform=row["platform"],
             account_namespace=row["account_namespace"],
             scene_type=SceneType(row["scene_type"]),
@@ -366,7 +366,7 @@ def _session_from_row(row: sqlite3.Row) -> SessionRecord:
         updated_at=_required_datetime(row["updated_at"]),
         closed_at=parse_datetime(row["closed_at"]),
         purpose=row["purpose"],
-        conversation_scope=scope,
+        scene=scope,
         work_id=row["work_id"],
     )
 
@@ -393,9 +393,9 @@ def _entry_from_row(row: sqlite3.Row) -> ContextEntryRecord:
 def _summary_from_row(
     row: sqlite3.Row,
     source_summary_ids: tuple[str, ...],
-) -> ContextSummary:
+) -> Summary:
     """把数据恢复成Summary"""
-    return ContextSummary(
+    return Summary(
         summary_id=row["summary_id"],
         session_id=row["session_id"],
         level=row["level"],
