@@ -42,7 +42,7 @@ flowchart TD
 5. `events.py`：Memory 事件注册和 Handler；
 6. `change_plan.py`、`executor.py`：变更计划和正式写入；
 7. `extractor.py`、`materialization.py`、`reviewer.py`：LLM 边界；
-8. `embedding.py`、`reranker.py`：查询/索引向量适配和基础重排实现。
+8. `embedding.py`：查询/索引向量适配。
 
 ## 2. 边界和文件职责
 
@@ -60,7 +60,7 @@ flowchart TD
 | `materialization.py` | Candidate 到 typed Payload 的 LLM 实现 |
 | `reviewer.py` | Payload 与 related items 的审查 |
 | `retriever.py` | MVP 内存检索器与 Memory Space Router |
-| `embedding.py`、`reranker.py` | 查询向量、MemoryItem 索引向量与基础重排实现 |
+| `embedding.py` | 查询向量与 MemoryItem 索引向量 |
 
 必须保持的边界：
 
@@ -233,3 +233,5 @@ Memory 测试位于 `tests/memory`。当前受影响链路可以运行：
 - [ ] Formation 仍使用同一份 related items 快照；
 - [ ] Memory Space 路由和 Scope 粗筛没有混用；
 - [ ] 新契约已同步外部文档和测试。
+
+重排器通过工厂可选注入；未注入时保留检索顺序。外部适配器位于 `adapter/model/reranker.py`，配置位于 `config/reranker.toml`，删除该配置文件即可在启动时跳过重排。请求失败时保留原候选顺序，不覆盖向量相似度分数。

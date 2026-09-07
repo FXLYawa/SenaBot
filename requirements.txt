@@ -6,3 +6,6 @@ openai>=1.0,<3
 
 # SQLite vector extension (validated on Windows / Python 3.12)
 sqlite-vec==0.1.9
+
+# Rerank HTTP client
+httpx>=0.27,<1

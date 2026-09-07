@@ -29,6 +29,7 @@ from core.memory import (
     MemoryRecallPolicy,
     create_memory_module,
 )
+from core.memory.protocols import MemoryRerankerProtocol
 from core.model import EmbeddingProvider, ModelProvider
 
 
@@ -90,6 +91,7 @@ class SenaBotDependencies:
     memory_model_provider: ModelProvider
     embedding_provider: EmbeddingProvider
     database: SQLiteDatabase
+    memory_reranker: MemoryRerankerProtocol | None = None
     fallback_model_provider: ModelProvider | None = None
     event_bus: EventBus | None = None
     context_repository: ContextRepositoryProtocol | None = None
@@ -133,6 +135,7 @@ def create_senabot_app(
             policy=app_config.memory_extraction,
         ),
         extraction_progress=data_components.memory_extraction_progress,
+        reranker=dependencies.memory_reranker,
     )
     agent_module = create_agent_module(
         dependencies.model_provider,
