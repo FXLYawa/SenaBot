@@ -24,6 +24,7 @@ from core.data import (
 from core.embedding import EmbeddingProvider
 from core.event import EventBus, EventClient, ModuleEventAPI
 from core.memory import MemoryLLMProtocol, MemoryRecallPolicy, create_memory_module
+from core.memory.protocols import MemoryRerankerProtocol
 from core.model import ModelProvider
 
 
@@ -84,6 +85,7 @@ class SenaBotDependencies:
     memory_llm: MemoryLLMProtocol
     embedding_provider: EmbeddingProvider
     database: SQLiteDatabase
+    memory_reranker: MemoryRerankerProtocol | None = None
     fallback_model_provider: ModelProvider | None = None
     event_bus: EventBus | None = None
     context_repository: ContextRepositoryProtocol | None = None
@@ -118,6 +120,7 @@ def create_senabot_app(
         data_components.memory_repository,
         data_components.memory_spaces,
         app_config.memory_recall,
+        reranker=dependencies.memory_reranker,
     )
     agent_module = create_agent_module(
         dependencies.model_provider,

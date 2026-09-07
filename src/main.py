@@ -8,7 +8,8 @@ from pathlib import Path
 
 from adapter.model.openai_compatible import OpenAICompatibleProvider
 from adapter.model.openai_embedding import OpenAICompatibleEmbeddingProvider
-from config import load_model_config
+from config import load_model_config, load_reranker_config
+from adapter.model.reranker import MemoryReranker
 from core.application.bootstrap import (
     SenaBotConfig,
     SenaBotDependencies,
@@ -62,6 +63,7 @@ async def run_from_config() -> None:
     project_root = Path(__file__).resolve().parent.parent
     model_config = load_model_config(project_root / "config" / "model.toml")
     embedding_config = load_model_config(project_root / "config" / "embedding.toml")
+    reranker_config = load_reranker_config(project_root / "config" / "reranker.toml")
     data_directory = project_root / "data"
     data_directory.mkdir(parents=True, exist_ok=True)
     async with AsyncExitStack() as resources:
@@ -79,6 +81,14 @@ async def run_from_config() -> None:
             timeout_seconds=embedding_config.timeout_seconds,
         )
         resources.push_async_callback(embedding_provider.close)
+        reranker = MemoryReranker(
+            api_key=reranker_config.api_key,
+            base_url=reranker_config.base_url,
+            model=reranker_config.model,
+            timeout_seconds=reranker_config.timeout_seconds,
+            endpoint=reranker_config.endpoint,
+        )
+        resources.push_async_callback(reranker.close)
         database = resources.enter_context(
             SQLiteDatabase(data_directory / "senabot.db")
         )
@@ -88,6 +98,7 @@ async def run_from_config() -> None:
                 memory_llm=MemoryLLMAdapter(provider),
                 embedding_provider=embedding_provider,
                 database=database,
+                memory_reranker=reranker,
             )
         )
 

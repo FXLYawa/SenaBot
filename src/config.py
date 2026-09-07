@@ -21,9 +21,18 @@ class ModelConfig:
     model: str
     api_key: str
     timeout_seconds: float
+    endpoint: str = "rerank"
 
 
 def load_model_config(path: str | PathLike[str]) -> ModelConfig:
+    return _load_config(path, "openai_compatible")
+
+
+def load_reranker_config(path: str | PathLike[str]) -> ModelConfig:
+    return _load_config(path, "rerank_compatible")
+
+
+def _load_config(path: str | PathLike[str], expected_provider: str) -> ModelConfig:
     """读取并校验模型 TOML 配置，同时解析 API Key 环境变量。"""
     try:
         # 读取TOML文件
@@ -31,7 +40,7 @@ def load_model_config(path: str | PathLike[str]) -> ModelConfig:
             raw = tomllib.load(config_file)
 
         provider = _required_string(raw, "provider")
-        if provider != "openai_compatible":
+        if provider != expected_provider:
             raise ValueError(f"unsupported model provider: {provider}")
 
         base_url = _required_string(raw, "base_url")
@@ -54,6 +63,7 @@ def load_model_config(path: str | PathLike[str]) -> ModelConfig:
             model=model,
             api_key=api_key,
             timeout_seconds=timeout_seconds,
+            endpoint=_required_string(raw, "endpoint") if expected_provider == "rerank_compatible" else "rerank",
         )
     except ConfigError:
         raise

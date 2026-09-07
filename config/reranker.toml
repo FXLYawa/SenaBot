@@ -1,0 +1,8 @@
+# Protocol: Bearer authentication; query/documents request;
+# results containing index and relevance_score response.
+provider = "rerank_compatible"
+endpoint = "rerank"
+base_url = "https://api.siliconflow.cn/v1"
+model = "Qwen/Qwen3-Reranker-8B"
+api_key_env = "SENABOT_EMBEDDING_API_KEY"
+timeout_seconds = 10.0
