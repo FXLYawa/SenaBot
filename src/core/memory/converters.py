@@ -1,17 +1,11 @@
-"""Memory 公开 DTO 与内部模型之间的转换函数。"""
+"""Context 原始记录到 Memory 文本输入、来源和作用域的边界转换。"""
 
 from __future__ import annotations
 
-from core.common import Summary
-from core.memory.contracts import (
-    MemoryWriteMessage,
-    MemoryWriteRequest,
-    MemoryWriteResult,
-)
-from core.memory.executor import MemoryChangeExecutionResult
+from core.common import SceneType, Summary
+from core.context import ContextActorType, ContextEntryRecord, SessionRecord
 from core.memory.models import (
     MemoryExtractionMessage,
-    MemoryRecallContext,
     MemoryScopeKind,
     MemoryScopeRef,
     Provenance,
@@ -19,29 +13,46 @@ from core.memory.models import (
 
 
 def to_extraction_messages(
-    messages: tuple[MemoryWriteMessage, ...],
+    entries: tuple[ContextEntryRecord, ...],
 ) -> list[MemoryExtractionMessage]:
-    """投影为提取器使用的文本消息；无文本表示时由内部契约拒绝。"""
+    """将 Context 条目转换为提取器消息，保留原文 ID、发言者和时间。"""
 
+    # 将 Context 发言者类型映射成提取器的消息角色，具体身份仍单独保留。
+    roles = {
+        ContextActorType.USER: "user",
+        ContextActorType.SENA: "assistant",
+        ContextActorType.SYSTEM: "system",
+        ContextActorType.TOOL: "tool",
+        ContextActorType.EXTENSION: "system",
+    }
+    # 提取 Content 的文本表示，与原文 ID、发言者和时间一起构造消息。
     return [
         MemoryExtractionMessage(
-            message_id=message.message_id,
-            role=message.role,
-            content=message.content.text_value(),
+            message_id=entry.entry_id,
+            role=roles[entry.actor.actor_type],
+            content=entry.content.text_value(),
+            actor_id=entry.actor.actor_id,
+            display_name=entry.actor.display_name,
+            created_at=entry.created_at,
         )
-        for message in messages
+        for entry in entries
     ]
 
 
-def to_provenance(request: MemoryWriteRequest) -> tuple[Provenance, ...]:
-    """根据写入请求构造记忆来源信息。"""
+def context_entry_provenance(
+    entries: tuple[ContextEntryRecord, ...],
+) -> tuple[Provenance, ...]:
+    """从传入的原始条目构造条目级和事件级的来源集合。"""
 
-    return (
-        Provenance(
-            source_type="event",
-            source_id=request.source_event_id,
-        ),
+    # 为整批目标条目或候选引用的条目子集，逐条生成原文来源标识。
+    sources = [Provenance("context_entry", entry.entry_id) for entry in entries]
+    # 同一个输入事件可能产生多条记录：条目分别保留，事件来源按首次出现顺序去重。
+    sources.extend(
+        Provenance("event", source_id)
+        for source_id in dict.fromkeys(entry.source_event_id for entry in entries)
+        if source_id is not None
     )
+    return tuple(sources)
 
 
 def to_extraction_summary(
@@ -70,54 +81,25 @@ def to_extraction_summary(
     )
 
 
-def build_recall_context(request: MemoryWriteRequest) -> MemoryRecallContext:
-    """根据写入请求构造 Formation 阶段召回相关记忆的边界。即查旧记忆时的检索边界"""
+def extraction_scopes(user_id: str, session: SessionRecord) -> frozenset[MemoryScopeRef]:
+    """提取来源的记忆归属和 Formation 查重范围。"""
 
-    return MemoryRecallContext(scopes=_scopes_from_request(request))
-
-
-def build_candidate_scopes(request: MemoryWriteRequest) -> frozenset[MemoryScopeRef]:
-    """根据写入请求构造新 MemoryItem 的长期归属范围。即写新记忆的新记忆归属"""
-
-    return _scopes_from_request(request)
-
-
-def to_write_result(
-    request: MemoryWriteRequest,
-    execution_results: list[MemoryChangeExecutionResult],
-) -> MemoryWriteResult:
-    """把内部执行结果转换为公开写入结果。"""
-
-    added_item_ids: list[str] = []
-    updated_item_ids: list[str] = []
-    for result in execution_results:
-        added_item_ids.extend(item.item_id for item in result.added_items)
-        updated_item_ids.extend(item.item_id for item in result.updated_items)
-
-    return MemoryWriteResult(
-        operation_id=request.operation_id,
-        memory_space_id=request.memory_space_id,
-        added_item_ids=tuple(added_item_ids),
-        updated_item_ids=tuple(updated_item_ids),
-    )
-
-
-def _scopes_from_request(request: MemoryWriteRequest) -> frozenset[MemoryScopeRef]:
+    # 使用配置绑定的用户和当前会话构造归属范围，群组或频道场景再加入群组范围。
     scopes = {
         MemoryScopeRef(
             kind=MemoryScopeKind.USER,
-            scope_id=request.user_id,
+            scope_id=user_id,
         ),
         MemoryScopeRef(
             kind=MemoryScopeKind.SESSION,
-            scope_id=request.session_id,
+            scope_id=session.session_id,
         ),
     }
-    if request.group_id.strip():
+    if session.scene is not None and session.scene.scene_type in (SceneType.GROUP, SceneType.CHANNEL):
         scopes.add(
             MemoryScopeRef(
                 kind=MemoryScopeKind.GROUP,
-                scope_id=request.group_id,
+                scope_id=session.scene.scene_id,
             )
         )
     return frozenset(scopes)

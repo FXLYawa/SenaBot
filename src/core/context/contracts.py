@@ -257,6 +257,82 @@ class ContextHistoryResultEventData:
 
 
 @dataclass(frozen=True, slots=True)
+class ContextReadRequestData:
+    """读取指定原始条目范围及其前置上下文，不改变活动窗口。"""
+
+    operation_id: str
+    session_id: str
+    after_sequence: int  # 目标范围下界，不包含。
+    through_sequence: int  # 目标范围上界，包含。
+
+    def __post_init__(self) -> None:
+        if not self.operation_id.strip() or not self.session_id.strip():
+            raise ValueError("context read identifiers must not be blank")
+        if self.after_sequence < 0 or self.through_sequence <= self.after_sequence:
+            raise ValueError("context read sequence range is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class ContextReadView:
+    """目标原文及其之前无重叠、无缺口的摘要与原文视图。"""
+
+    session: SessionRecord
+    after_sequence: int
+    through_sequence: int
+    entries: tuple[ContextEntryRecord, ...]  # 目标范围的完整原始条目。
+    # 目标范围之前仍以原文保留的条目，与 summaries 一起重建提取所需的历史语境。
+    preceding_entries: tuple[ContextEntryRecord, ...] = ()
+    summaries: tuple[Summary, ...] = ()  # 仅覆盖目标之前的范围，可保留多级节点。
+
+    def __post_init__(self) -> None:
+        # 目标区间采用 (after_sequence, through_sequence]，必须至少包含一个条目。
+        if self.after_sequence < 0 or self.through_sequence <= self.after_sequence:
+            raise ValueError("context read sequence range is invalid")
+        # 目标原文必须按序完整覆盖请求区间，防止 Memory 在缺失消息时推进进度。
+        if tuple(entry.sequence for entry in self.entries) != tuple(
+            range(self.after_sequence + 1, self.through_sequence + 1)
+        ):
+            raise ValueError("context read target entries must cover the entire range")
+        # 前置视图和目标原文只能来自同一个会话，避免跨会话拼接上下文。
+        if any(
+            item.session_id != self.session.session_id
+            for item in (*self.entries, *self.preceding_entries, *self.summaries)
+        ):
+            raise ValueError("context read items must belong to the requested session")
+        # MVP 假设会话历史从序号 1 起可被原文或摘要连续覆盖；若以后允许裁剪最早历史，
+        # 这里应改为从持久化的最早可用边界开始校验。
+        ranges = sorted(
+            [(entry.sequence, entry.sequence) for entry in self.preceding_entries]
+            + [(summary.first_sequence, summary.last_sequence) for summary in self.summaries]
+        )
+        covered = 0
+        # 每段必须紧接上一段且不能越过目标下界，从而排除缺口、重叠和越界摘要。
+        for first, last in ranges:
+            if first != covered + 1 or last > self.after_sequence:
+                raise ValueError("preceding context must not overlap or contain gaps")
+            covered = last
+        # 所有前置片段最终必须恰好抵达目标区间的 after_sequence。
+        if covered != self.after_sequence:
+            raise ValueError("preceding context must reach the target boundary")
+
+
+@dataclass(frozen=True, slots=True)
+class ContextReadResultEventData:
+    """一次范围读取的完整结果或明确失败，不返回部分成功。"""
+
+    operation_id: str
+    session_id: str
+    view: ContextReadView | None = None
+    error: ContextErrorInfo | None = None
+
+    def __post_init__(self) -> None:
+        if (self.view is None) == (self.error is None):
+            raise ValueError("context read result requires a view or an error")
+        if self.view is not None and self.view.session.session_id != self.session_id:
+            raise ValueError("context read result session does not match view")
+
+
+@dataclass(frozen=True, slots=True)
 class ContextStateChangedEventData:
     """上下文追加事件响应数据"""
     

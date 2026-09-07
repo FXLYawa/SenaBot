@@ -116,6 +116,16 @@ class MemoryRepositoryProtocol(Protocol):
     ) -> MemorySupersedeResult: ...
 
 
+class MemoryExtractionProgressProtocol(Protocol):
+    """自动提取完整处理过的原始范围，独立于 Context 压缩与显式记忆写入。"""
+
+    def load_processed_sequence(self, memory_space_id: str, session_id: str) -> int: ...
+
+    def save_processed_sequence(
+        self, memory_space_id: str, session_id: str, through_sequence: int,
+    ) -> None: ...
+
+
 class MemoryReviewerProtocol(Protocol):
     """根据payload和related_item生成具体执行计划"""
 

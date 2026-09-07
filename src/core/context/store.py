@@ -25,6 +25,12 @@ class ContextStateStore:
     def is_loaded(self, session_id: str) -> bool:
         """检查指定会话是否已加载"""
         return session_id in self._sessions
+
+    def snapshot(self, session_id: str) -> ContextSnapshot | None:
+        """读取已加载窗口，不恢复或修改 Session。"""
+
+        state = self._sessions.get(session_id)
+        return None if state is None else state.snapshot()
         
     def initialize_conversation(self, scene: SceneInfo) -> None:
         """初始化尚不存在的 Conversation Session"""

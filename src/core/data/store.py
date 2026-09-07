@@ -5,9 +5,12 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime
 
-from core.context.contracts import (
+from core.common import Summary
+from core.context import (
+    ContextEntryRecord,
     ContextSnapshot,
     ContextStateChangedEventData,
+    SessionRecord,
 )
 from core.memory.models import Fact, MemoryItem
 
@@ -30,6 +33,33 @@ class InMemoryDataStore:
         """按 session_id 读取 Context 快照。"""
 
         return self._context_snapshots.get(session_id)
+
+    def load_session(self, session_id: str) -> SessionRecord | None:
+        """按 session_id 读取 SessionRecord。"""
+        
+        snapshot = self._context_snapshots.get(session_id)
+        return None if snapshot is None else snapshot.session
+
+    def load_entries(
+        self, session_id: str, after_sequence: int, through_sequence: int,
+    ) -> tuple[ContextEntryRecord, ...]:
+        """按 session_id 和 sequence 范围读取 ContextEntryRecord。"""
+        
+        snapshot = self._context_snapshots.get(session_id)
+        return () if snapshot is None else tuple(
+            entry for entry in snapshot.entries
+            if after_sequence < entry.sequence <= through_sequence
+        )
+
+    def load_summaries(
+        self, session_id: str, through_sequence: int,
+    ) -> tuple[Summary, ...]:
+        """按 session_id 和 sequence 范围读取 Summary。"""
+        
+        snapshot = self._context_snapshots.get(session_id)
+        return () if snapshot is None else tuple(
+            summary for summary in snapshot.summaries if summary.last_sequence <= through_sequence
+        )
 
     def save_context_change(
         self,

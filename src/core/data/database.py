@@ -47,35 +47,29 @@ class SQLiteDatabase:
             raise
 
     def _migrate(self) -> None:
-        """检查数据库结构版本，首次使用时执行建表。"""
+        """顺序应用版本迁移，保留已有历史及记忆数据。"""
 
         # 开启事务
         with self.transaction():
             version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-            # 1代表已经初始化
-            if version == 1:
-                return
-            # 0代表未初始化,不是0直接报错
-            if version != 0:
+            migrations = ("001_initial.sql", "002_memory_extraction.sql")
+            if version < 0 or version > len(migrations):
                 raise ValueError(f"unsupported database schema version: {version}")
-
-            # 找到执行SQL语句的路径
-            migration_path = Path(__file__).parent / "migrations" / "001_initial.sql"
-            sql = migration_path.read_text(encoding="utf-8")
-            # 逐条执行SQL语句.
-            statement = ""
-            for line in sql.splitlines(keepends=True):
-                statement += line
-                if sqlite3.complete_statement(statement):
-                    self.connection.execute(statement)
-                    statement = ""
-            # 检查文件尾部并标记完成
-            if any(
-                line.strip() and not line.lstrip().startswith("--")
-                for line in statement.splitlines()
-            ):
-                raise ValueError("incomplete database migration statement")
-            self.connection.execute("PRAGMA user_version = 1")
+            for next_version in range(version + 1, len(migrations) + 1):
+                migration_path = Path(__file__).parent / "migrations" / migrations[next_version - 1]
+                sql = migration_path.read_text(encoding="utf-8")
+                statement = ""
+                for line in sql.splitlines(keepends=True):
+                    statement += line
+                    if sqlite3.complete_statement(statement):
+                        self.connection.execute(statement)
+                        statement = ""
+                if any(
+                    line.strip() and not line.lstrip().startswith("--")
+                    for line in statement.splitlines()
+                ):
+                    raise ValueError("incomplete database migration statement")
+                self.connection.execute(f"PRAGMA user_version = {next_version}")
 
     def initialize_vectors(self, dimensions: int) -> None:
         """显式设置固定向量维度；重开可复用同维度表，不自动重建已有向量。"""

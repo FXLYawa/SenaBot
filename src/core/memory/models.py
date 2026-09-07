@@ -270,17 +270,17 @@ class MemoryRetrievalCandidate:
 
 @dataclass
 class MemoryExtractionMessage:
-    """
-    Extraction 阶段使用的完整上下文。
+    """提取器消费的单条文本消息，保留原始条目身份及时间。"""
 
-    new_messages 是本次允许作为新记忆来源的消息；
-    summary 和 recent_messages 只用于辅助理解当前消息；
-    provenance 用于记录本次提取结果对应的来源信息。
-    """
-
+    # 对应 Context entry_id，供候选引用原文并回溯来源。
     message_id: str
     role: str
     content: str
+    # role 表达消息角色，actor_id 和 display_name 表达具体发言者。
+    actor_id: str | None = None
+    display_name: str = ""
+    # 原始条目的记录时间，供提取器理解对话中的时间信息。
+    created_at: datetime | None = None
 
     def __post_init__(self) -> None:
         _require_non_blank(self.message_id, "message_id")
@@ -289,31 +289,15 @@ class MemoryExtractionMessage:
 
 
 @dataclass
-class MemoryExtractionInput:
-    """
-    原始消息的合集
-    通常为一对对话
-     当前用户消息
-    对应的最终 Agent 回复
-
-    不包含历史摘要和最近历史消息；
-    这些由 Extraction 阶段获取并作为辅助上下文。
-    """
-
-    messages: list[MemoryExtractionMessage]
-    provenance: tuple[Provenance, ...]
-
-    def __post_init__(self) -> None:
-        _require_provenance(self.provenance)
-
-
-@dataclass
 class MemoryExtractionContext:
     """组装后的上下文"""
 
+    # 本批待提取的目标原文，候选通过 source_message_ids 引用其中的消息。
     new_messages: list[MemoryExtractionMessage]
+    # 目标之前的摘要及摘要之后的历史原文，共同提供理解背景。
     summary: str | None
     recent_messages: list[MemoryExtractionMessage]
+    # 本批目标条目的来源集合；正式形成记忆前会按每个候选的引用进一步收窄。
     provenance: tuple[Provenance, ...]
 
     def __post_init__(self) -> None:

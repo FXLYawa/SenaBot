@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from enum import StrEnum
 from typing import Protocol, TypeAlias
 
@@ -11,9 +10,7 @@ from core.common import (
     OutputRoute,
     SceneInfo,
     SourceInfo,
-    Summary,
 )
-from core.context import ContextEntryRecord
 
 
 """Agent 内部运行模型"""
@@ -91,22 +88,6 @@ class MemoryQueryEffect:
 
 
 @dataclass(frozen=True, slots=True)
-class MemoryWriteEffect:
-    """希望 Memory 从一组 Context 消息中形成长期记忆。"""
-
-    operation_id: str
-    messages: tuple[ContextEntryRecord, ...]
-    requester: SourceInfo
-    session_id: str
-    scene: SceneInfo
-    persona_id: str
-    source_event_id: str
-    recent_messages: tuple[ContextEntryRecord, ...] = ()
-    summaries: tuple[Summary, ...] = ()
-    recorded_at: datetime | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class FinishEffect:
     """Behavior 已完成语义工作。"""
     # 无需字段，只需要表达这一结果即可
@@ -124,7 +105,6 @@ class FailEffect:
 AgentEffect: TypeAlias = (
     ReplyEffect
     | MemoryQueryEffect
-    | MemoryWriteEffect
     | FinishEffect
     | FailEffect
 )

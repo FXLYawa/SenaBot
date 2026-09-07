@@ -10,6 +10,8 @@ from core.context.contracts import (
     ContextHistoryResultEventData,
     ContextInputFailedEventData,
     ContextPreparedEventData,
+    ContextReadRequestData,
+    ContextReadResultEventData,
     ContextRestoreRequestData,
     ContextRestoreResultEventData,
     ContextStateChangedEventData,
@@ -19,6 +21,8 @@ from core.context.contracts import (
 )
 from core.context.conversation import ConversationFlow
 from core.context.entry_appender import EntryAppender
+from core.context.ports import ContextArchiveProtocol
+from core.context.reader import ContextReader
 from core.context.store import ContextStateStore
 from core.context.window import ContextWindowPolicy
 from core.context.work_session import WorkSessionFlow
@@ -33,6 +37,7 @@ class ContextModule:
         store: ContextStateStore,
         window: ContextWindowPolicy,
         compressor: ContextCompressor | None = None,
+        archive: ContextArchiveProtocol | None = None,
     ) -> None:
         compaction = CompactionFlow(store, window, compressor)
         appender = EntryAppender(store, compaction)
@@ -40,6 +45,7 @@ class ContextModule:
         self._work = WorkSessionFlow(store)
         self._compaction = compaction
         self._appender = appender
+        self._reader = ContextReader(store, archive)
 
     def register(self, events: ModuleEventAPI) -> None:
         """声明 Context 拥有的事件，并订阅输入、恢复和内部工作事件。"""
@@ -48,6 +54,8 @@ class ContextModule:
         # event 注册
         event_definitions = (
             ("context.prepared", ContextPreparedEventData),
+            ("context.read.requested", ContextReadRequestData),
+            ("context.read.resolved", ContextReadResultEventData),
             ("context.input.failed", ContextInputFailedEventData),
             ("context.append.requested", ContextAppendRequestData),
             ("context.history.requested", ContextHistoryRequestData),
@@ -68,6 +76,7 @@ class ContextModule:
                 "context.body_input",
             ),
             ("context.append.requested", self._handle_append, "context.append"),
+            ("context.read.requested", self._reader.handle_request, "context.read"),
             ("context.work.requested", self._work.handle_request, "context.work"),
             (
                 "context.restore.resolved",
@@ -87,8 +96,8 @@ class ContextModule:
         )
         for event_type, payload_type in event_definitions:
             events.register(event_type, payload_type=payload_type)
-        for event_pattern, handler, handler_id in subscriptions:
-            events.subscribe(event_pattern, handler, handler_id=handler_id)
+        for subscription in subscriptions:
+            events.subscribe(*subscription)
 
     async def _handle_append(self, flow: EventFlow) -> None:
         """追加来自 Agent 等模块的条目，并发布完整状态变化事实。"""

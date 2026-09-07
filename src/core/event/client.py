@@ -102,14 +102,17 @@ class ModuleEventAPI(EventClient):
         self,
         event_pattern: str,
         handler: EventHandler,
-        *,
         handler_id: str,
-        priority: int = 100,
         timeout: float | None = None,
+        *,
+        priority: int = 100,
         controls_flow: bool = False,
         max_attempts: int = 1,
     ) -> RegistrationToken:
-        """注册事件处理器"""
+        """注册处理器；支持三字段订阅声明，以及第四字段指定超时的声明。
+
+        handler_id 和 timeout 也可通过关键字传入，timeout 为 None 时沿用总线默认时限。
+        """
         
         return self._bus.subscribe(
             HandlerSpec(

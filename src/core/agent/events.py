@@ -54,23 +54,13 @@ class AgentModule:
                 "agent.memory_query_completed",
             ),
             (
-                "memory.write.completed",
-                self._runs.handle_memory_write_result,
-                "agent.memory_write_completed",
-            ),
-            (
                 "memory.query.failed",
                 self._runs.handle_memory_query_failed,
                 "agent.memory_query_failed",
-            ),
-            (
-                "memory.write.failed",
-                self._runs.handle_memory_write_failed,
-                "agent.memory_write_failed",
             ),
         )
 
         for event_type, payload_type in event_definitions:
             events.register(event_type, payload_type=payload_type)
-        for event_pattern, handler, handler_id in subscriptions:
-            events.subscribe(event_pattern, handler, handler_id=handler_id)
+        for subscription in subscriptions:
+            events.subscribe(*subscription)
