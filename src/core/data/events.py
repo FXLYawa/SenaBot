@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core.context.contracts import (
+from core.context import (
     ContextErrorInfo,
     ContextRestoreRequestData,
     ContextRestoreResultEventData,
@@ -21,17 +21,26 @@ class DataModule:
 
     def register(self, events: ModuleEventAPI) -> None:
         """订阅 Context 的恢复请求和状态变化。"""
-
-        events.subscribe(
-            "context.restore.requested",
-            self._handle_context_restore_requested,
-            handler_id="data.context_restore_requested",
+        
+        # event 注册
+        event_definitions = ()
+        # handler 订阅
+        subscriptions = (
+            (
+                "context.restore.requested",
+                self._handle_context_restore_requested,
+                "data.context_restore_requested",
+            ),
+            (
+                "context.state.changed",
+                self._handle_context_state_changed,
+                "data.context_state_changed",
+            ),
         )
-        events.subscribe(
-            "context.state.changed",
-            self._handle_context_state_changed,
-            handler_id="data.context_state_changed",
-        )
+        for event_type, payload_type in event_definitions:
+            events.register(event_type, payload_type=payload_type)
+        for subscription in subscriptions:
+            events.subscribe(*subscription)
 
     async def _handle_context_restore_requested(self, flow: EventFlow) -> None:
         """响应 Context 冷恢复请求。"""

@@ -75,10 +75,18 @@ class LLMMemoryExtractor:
         if not messages:
             return "无"
 
-        return "\n".join(
-            f"[{message.message_id}] {message.role}: {message.content}"
-            for message in messages
-        )
+        lines = []
+        for message in messages:
+            facts = []
+            if message.actor_id is not None:
+                facts.append(f"actor_id={message.actor_id}")
+            if message.display_name:
+                facts.append(f"name={message.display_name}")
+            if message.created_at is not None:
+                facts.append(f"created_at={message.created_at.isoformat()}")
+            metadata = f" ({', '.join(facts)})" if facts else ""
+            lines.append(f"[{message.message_id}] {message.role}{metadata}: {message.content}")
+        return "\n".join(lines)
 
     def _parse_response(
         self,
@@ -92,7 +100,7 @@ class LLMMemoryExtractor:
         if not isinstance(data, dict):
             raise ValueError("memory extraction response must be a JSON object")
 
-        memories = data.get("memories", [])
+        memories = data.get("memories")
 
         if not isinstance(memories, list):
             raise ValueError("memory extraction memories must be a JSON array")
@@ -104,13 +112,13 @@ class LLMMemoryExtractor:
         candidates = []
         for item in memories:
             if not isinstance(item, dict):
-                continue
+                raise ValueError("memory extraction candidate must be a JSON object")
 
             content = item.get("content")
             source_message_ids = item.get("source_message_ids")
 
             if not isinstance(content, str) or not content.strip():
-                continue
+                raise ValueError("memory extraction candidate content must not be blank")
 
             if (
                 not isinstance(source_message_ids, list)
@@ -120,7 +128,7 @@ class LLMMemoryExtractor:
                     for message_id in source_message_ids
                 )
             ):
-                continue
+                raise ValueError("memory extraction candidate requires source_message_ids")
 
             normalized_source_ids = tuple(
                 dict.fromkeys(message_id.strip() for message_id in source_message_ids)
