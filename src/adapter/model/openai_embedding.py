@@ -14,8 +14,9 @@ from openai import (
     RateLimitError,
 )
 
-from core.embedding import EmbeddingRequest, EmbeddingResponse
 from core.model import (
+    EmbeddingRequest,
+    EmbeddingResponse,
     ModelAuthError,
     ModelError,
     ModelRateLimitError,

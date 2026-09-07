@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from core.embedding import EmbeddingProvider
+from core.model import EmbeddingProvider, ModelProvider
 from core.memory.embedding import ProviderMemoryEmbedder
 from core.memory.events import MemoryModule
 from core.memory.executor import MemoryChangeExecutor
 from core.memory.extractor import LLMMemoryExtractor
 from core.memory.materialization import LLMMemoryMaterializer
 from core.memory.protocols import (
-    MemoryLLMProtocol,
     MemoryRepositoryProtocol,
     MemorySpaceRouterProtocol,
 )
@@ -19,7 +18,7 @@ from core.memory.service import MemoryRecallPolicy, MemoryService
 
 
 def create_memory_module(
-    memory_llm: MemoryLLMProtocol,
+    model_provider: ModelProvider,
     embedding_provider: EmbeddingProvider,
     repository: MemoryRepositoryProtocol,
     memory_spaces: MemorySpaceRouterProtocol,
@@ -29,12 +28,12 @@ def create_memory_module(
 
     embedder = ProviderMemoryEmbedder(embedding_provider)
     service = MemoryService(
-        extractor=LLMMemoryExtractor(memory_llm),
+        extractor=LLMMemoryExtractor(model_provider),
         embedder=embedder,
         memory_spaces=memory_spaces,
         reranker=SimpleMemoryReranker(),
-        materializer=LLMMemoryMaterializer(memory_llm),
-        reviewer=LLMMemoryReviewer(memory_llm),
+        materializer=LLMMemoryMaterializer(model_provider),
+        reviewer=LLMMemoryReviewer(model_provider),
         executor=MemoryChangeExecutor(repository, indexer=embedder),
         recall_policy=recall_policy,
     )

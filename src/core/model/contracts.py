@@ -1,13 +1,14 @@
-"""业务模块共享的最小语言模型调用契约，不构成独立业务层。"""
+"""厂商无关的生成、向量化契约及模型调用异常。"""
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Protocol
 
 
 class ModelError(Exception):
-    """语言模型调用的统一基础异常。"""
+    """模型调用的统一基础异常。"""
 
 
 class ModelRequestError(ModelError):
@@ -15,7 +16,7 @@ class ModelRequestError(ModelError):
 
 
 class ModelResponseError(ModelError):
-    """模型响应无法转换为公共响应协议。"""
+    """模型响应不符合所需的结构、结束状态或文本格式。"""
 
 
 class ModelAuthError(ModelError):
@@ -54,10 +55,10 @@ class ModelRequest:
 
     messages: tuple[ModelMessage, ...]
 
-    # 调整模型使用的思维活跃度
+    # 采样温度，控制输出的随机性。
     temperature: float | None = None
 
-    #最大Token使用限制
+    # 输出 Token 数量上限。
     max_output_tokens: int | None = None
 
     def __post_init__(self) -> None:
@@ -70,7 +71,7 @@ class ModelRequest:
         if self.temperature is not None and (
             isinstance(self.temperature, bool)
             or not isinstance(self.temperature, (int, float))
-            or  self.temperature < 0
+            or self.temperature < 0
         ):
             raise ModelRequestError("model request temperature must be >= 0")
         if self.max_output_tokens is not None and (
@@ -98,17 +99,70 @@ class ModelResponse:
     """模型的返回结果,可供SenaBot内部消费"""
 
     text: str
-    # 实际相应对应的模型名
+    # 实际响应对应的模型名
     model: str
-    # 停止响应的原因
+    # Provider 将正常完成归一化为 stop，其他结束原因保留以供调用方判断。
     finish_reason: str = "stop"
     # token使用统计,可选
     usage: ModelUsage | None = None
 
 
 class ModelProvider(Protocol):
-    """具体模型 Adapter 实现的共享技术 Interface。"""
+    """文本生成能力；客户端由创建方管理，借用方不负责关闭。"""
 
     async def generate(self, request: ModelRequest) -> ModelResponse: ...
+
+    async def close(self) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingRequest:
+    """保留调用方原文的一次向量化请求。"""
+
+    text: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.text, str) or not self.text.strip():
+            raise ModelRequestError("embedding text must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingResponse:
+    """向量化结果，包含服务实际返回的模型标识。"""
+
+    vector: tuple[float, ...]
+
+    # 具体模型标识
+    model: str
+    # 使用的Token用量结构
+    usage: ModelUsage | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.model, str) or not self.model.strip():
+            raise ModelResponseError("embedding model must not be empty")
+        if not isinstance(self.vector, tuple) or not self.vector:
+            raise ModelResponseError("embedding vector must not be empty")
+        for value in self.vector:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ModelResponseError("embedding vector must contain numbers")
+            try:
+                # 检查数值是否有限
+                finite = math.isfinite(value)
+            except OverflowError as exc:
+                raise ModelResponseError("embedding value is out of range") from exc
+            if not finite:
+                raise ModelResponseError("embedding vector must contain finite numbers")
+        object.__setattr__(self, "vector", tuple(float(v) for v in self.vector))
+
+    @property
+    def dimensions(self) -> int:
+        """模型实际输出维度。"""
+        return len(self.vector)
+
+
+class EmbeddingProvider(Protocol):
+    """向量化能力；客户端由创建方管理，借用方不负责关闭。"""
+
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse: ...
 
     async def close(self) -> None: ...

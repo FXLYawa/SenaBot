@@ -1,6 +1,15 @@
 from datetime import datetime
 from typing import Any
 
+from core.model import (
+    ModelMessage,
+    ModelProvider,
+    ModelRequest,
+    parse_json_response,
+    render_prompt,
+    require_complete_response,
+)
+
 from .models import (
     Entity,
     Experience,
@@ -12,16 +21,13 @@ from .models import (
     MemoryPayload,
     Understanding,
 )
-from .json_response import parse_json_response
-from .prompts import MEMORY_MATERIALIZATION_PROMPT
-from .protocols import MemoryLLMProtocol
 
 
 class LLMMemoryMaterializer:
     """基于 LLM 将候选记忆转换为领域 Payload。"""
 
-    def __init__(self, llm: MemoryLLMProtocol) -> None:
-        self._llm = llm
+    def __init__(self, provider: ModelProvider) -> None:
+        self._provider = provider
 
     async def materialize(
         self,
@@ -30,10 +36,13 @@ class LLMMemoryMaterializer:
         """调用 LLM 判断领域，并构造受领域模型约束的 Payload。"""
 
         prompt = _build_prompt(input_data)
-        response = await self._llm.generate(prompt)
+        response = await self._provider.generate(
+            ModelRequest(messages=(ModelMessage(role="user", content=prompt),))
+        )
+        require_complete_response(response)
 
         # 把JSON字符串转换成Payload
-        return self._parse_response(response, input_data)
+        return self._parse_response(response.text, input_data)
 
     @classmethod
     def _parse_response(
@@ -252,7 +261,9 @@ def _build_prompt(
     input_data: MemoryMaterializationInput,
 ) -> str:
     """构造给LLM的上下文,包括候选记忆,记录时间和相关记忆"""
-    return MEMORY_MATERIALIZATION_PROMPT.format(
+    return render_prompt(
+        "core.memory.prompts",
+        "materialization.txt",
         candidate=input_data.candidate.content,
         recorded_at=input_data.recorded_at.isoformat(),
         related_items=_format_related_items(input_data.related_items),

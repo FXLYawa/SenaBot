@@ -1,6 +1,15 @@
 import json
 from typing import Any
 
+from core.model import (
+    ModelMessage,
+    ModelProvider,
+    ModelRequest,
+    parse_json_response,
+    render_prompt,
+    require_complete_response,
+)
+
 from .change_plan import (
     AddMemoryItem,
     EndFactValidity,
@@ -16,16 +25,13 @@ from .models import (
     MemoryPayload,
     MemoryReviewInput,
 )
-from .json_response import parse_json_response
-from .prompts import MEMORY_REVIEW_PROMPT
-from .protocols import MemoryLLMProtocol
 
 
 class LLMMemoryReviewer:
     """基于 LLM 判断已成形 Payload 与已有记忆的关系,并执行相应的Plan。"""
 
-    def __init__(self, llm: MemoryLLMProtocol) -> None:
-        self._llm = llm
+    def __init__(self, provider: ModelProvider) -> None:
+        self._provider = provider
 
     async def review(
         self,
@@ -33,10 +39,13 @@ class LLMMemoryReviewer:
     ) -> MemoryChangePlan:
         """根据Payload和related_item得到plan"""
         prompt = self._build_prompt(input_data)
-        response = await self._llm.generate(prompt)
+        response = await self._provider.generate(
+            ModelRequest(messages=(ModelMessage(role="user", content=prompt),))
+        )
+        require_complete_response(response)
 
         # 把plan从字符串转换为Python对象
-        plan = _MemoryReviewResponseParser(input_data.payload).parse(response)
+        plan = _MemoryReviewResponseParser(input_data.payload).parse(response.text)
         # 验证
         plan.validate_against(input_data.related_items)
 
@@ -45,7 +54,9 @@ class LLMMemoryReviewer:
     @classmethod
     def _build_prompt(cls, input_data: MemoryReviewInput) -> str:
         """把 payload 和相关记忆都转为字符串塞进prompt"""
-        return MEMORY_REVIEW_PROMPT.format(
+        return render_prompt(
+            "core.memory.prompts",
+            "review.txt",
             payload=json.dumps(
                 cls._payload_data(input_data.payload),
                 ensure_ascii=False,
