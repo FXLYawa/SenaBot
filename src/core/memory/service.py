@@ -87,7 +87,7 @@ class MemoryService:
         extractor: MemoryExtractorProtocol,
         embedder: MemoryEmbeddingProtocol,
         memory_spaces: MemorySpaceRouterProtocol,
-        reranker: MemoryRerankerProtocol,
+        reranker: MemoryRerankerProtocol | None,
         materializer: MemoryMaterializerProtocol,
         reviewer: MemoryReviewerProtocol,
         executor: MemoryChangeExecutorProtocol,
@@ -122,10 +122,11 @@ class MemoryService:
         )
 
         # 进行精度更高的重排序,得到最终结果
-        candidates = await self.reranker.rerank(
-            request.query_text,
-            candidates,
-        )
+        if self.reranker is not None:
+            candidates = await self.reranker.rerank(
+                request.query_text,
+                candidates,
+            )
         candidates = self._filter_candidates(
             candidates,
             min_score=self.recall_policy.query_min_score,

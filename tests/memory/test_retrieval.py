@@ -14,7 +14,6 @@ from core.memory.models import (
     MemoryScopeRef,
     Provenance,
 )
-from core.memory.reranker import SimpleMemoryReranker
 from core.memory.retriever import (
     SimpleMemoryRetriever,
     SimpleMemorySpaceRouter,
@@ -378,23 +377,6 @@ async def test_simple_retriever_filters_inaccessible_items():
     assert await retriever.retrieve([2.0], context=context) == []
 
 
-@pytest.mark.asyncio
-async def test_simple_reranker_sorts_candidates_by_score_descending():
-    low_score = MemoryRetrievalCandidate(
-        memory=create_memory("memory-low", "低相关记忆"),
-        score=0.1,
-    )
-    high_score = MemoryRetrievalCandidate(
-        memory=create_memory("memory-high", "高相关记忆"),
-        score=0.9,
-    )
-    candidates = [low_score, high_score]
-
-    result = await SimpleMemoryReranker().rerank("查询", candidates)
-
-    assert result == [high_score, low_score]
-    assert candidates == [low_score, high_score]
-
 
 def test_recall_context_matches_same_user_scope():
     user_scope = MemoryScopeRef(
@@ -621,3 +603,17 @@ async def test_memory_space_router_selects_one_memory_space():
     assert candidates == [
         MemoryRetrievalCandidate(accessible_item, score=0.0)
     ]
+
+
+@pytest.mark.asyncio
+async def test_query_without_reranker_preserves_retrieval_order():
+    calls = []
+    candidates = [MemoryRetrievalCandidate(create_memory("a", "first"), score=0.9),
+                  MemoryRetrievalCandidate(create_memory("b", "second"), score=0.8)]
+    service = MemoryService(extractor=object(), embedder=RecordingEmbedder(calls),
+        memory_spaces=RecordingMemorySpaceRouter(calls, RecordingRetriever(calls, candidates)),
+        reranker=None, materializer=object(), reviewer=object(), executor=object())
+    result = await service.query(MemoryQueryRequest(query_id="q", memory_space_id="s",
+        user_id="u", session_id="session", group_id="", query_text="query"))
+    assert result.memories == [candidate.memory for candidate in candidates]
+    assert not any(call[0] == "rerank" for call in calls)

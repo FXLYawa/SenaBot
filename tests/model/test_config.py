@@ -54,3 +54,18 @@ def test_load_model_config_normalizes_invalid_config_errors(
 def test_load_model_config_normalizes_missing_file_error(tmp_path: Path) -> None:
     with pytest.raises(ConfigError):
         load_model_config(tmp_path / "missing.toml")
+
+
+def test_reranker_config_has_its_own_endpoint(tmp_path, monkeypatch):
+    from config import RerankerConfig, ModelConfig, load_reranker_config
+    from dataclasses import fields
+    path = tmp_path / "reranker.toml"
+    path.write_text('provider="rerank_compatible"\nbase_url="https://example.com/v2"\nmodel="test"\napi_key_env="TEST_RERANK_KEY"\ntimeout_seconds=10\nendpoint="rank"\n')
+    monkeypatch.setenv("TEST_RERANK_KEY", "test")
+    result = load_reranker_config(path)
+    assert isinstance(result, RerankerConfig)
+    assert result.endpoint == "rank"
+    assert "endpoint" not in {field.name for field in fields(ModelConfig)}
+    path.write_text(path.read_text().replace('endpoint="rank"', 'endpoint=""'))
+    with pytest.raises(ConfigError):
+        load_reranker_config(path)

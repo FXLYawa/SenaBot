@@ -14,7 +14,6 @@ from core.memory.protocols import (
     MemoryRepositoryProtocol,
     MemorySpaceRouterProtocol,
 )
-from core.memory.reranker import SimpleMemoryReranker
 from core.memory.reviewer import LLMMemoryReviewer
 from core.memory.service import MemoryRecallPolicy, MemoryService
 
@@ -35,7 +34,7 @@ def create_memory_module(
         extractor=LLMMemoryExtractor(memory_llm),
         embedder=embedder,
         memory_spaces=memory_spaces,
-        reranker=reranker if reranker is not None else SimpleMemoryReranker(),
+        reranker=reranker,
         materializer=LLMMemoryMaterializer(memory_llm),
         reviewer=LLMMemoryReviewer(memory_llm),
         executor=MemoryChangeExecutor(repository, indexer=embedder),

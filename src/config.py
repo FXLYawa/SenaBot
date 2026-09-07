@@ -6,6 +6,7 @@ import os
 import tomllib
 from dataclasses import dataclass
 from os import PathLike
+from typing import Literal, overload
 
 
 class ConfigError(Exception):
@@ -21,15 +22,29 @@ class ModelConfig:
     model: str
     api_key: str
     timeout_seconds: float
-    endpoint: str = "rerank"
+
+
+@dataclass(frozen=True, slots=True)
+class RerankerConfig(ModelConfig):
+    """重排专用配置，接口路径由配置文件提供。"""
+
+    endpoint: str
 
 
 def load_model_config(path: str | PathLike[str]) -> ModelConfig:
     return _load_config(path, "openai_compatible")
 
 
-def load_reranker_config(path: str | PathLike[str]) -> ModelConfig:
+def load_reranker_config(path: str | PathLike[str]) -> RerankerConfig:
     return _load_config(path, "rerank_compatible")
+
+
+@overload
+def _load_config(path: str | PathLike[str], expected_provider: Literal["openai_compatible"]) -> ModelConfig: ...
+
+
+@overload
+def _load_config(path: str | PathLike[str], expected_provider: Literal["rerank_compatible"]) -> RerankerConfig: ...
 
 
 def _load_config(path: str | PathLike[str], expected_provider: str) -> ModelConfig:
@@ -57,14 +72,16 @@ def _load_config(path: str | PathLike[str], expected_provider: str) -> ModelConf
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be greater than 0")
 
-        return ModelConfig(
+        values = dict(
             provider=provider,
             base_url=base_url,
             model=model,
             api_key=api_key,
             timeout_seconds=timeout_seconds,
-            endpoint=_required_string(raw, "endpoint") if expected_provider == "rerank_compatible" else "rerank",
         )
+        if expected_provider == "rerank_compatible":
+            return RerankerConfig(**values, endpoint=_required_string(raw, "endpoint"))
+        return ModelConfig(**values)
     except ConfigError:
         raise
     except (OSError, KeyError, TypeError, ValueError, tomllib.TOMLDecodeError) as exc:
