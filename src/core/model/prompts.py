@@ -13,7 +13,7 @@ def load_prompt(package: str, name: str) -> str:
     return files(package).joinpath(name).read_text(encoding="utf-8").strip()
 
 
-def render_prompt(package: str, name: str, /, **values: object) -> str:
-    """按命名变量渲染一次；文件名参数不占用模板变量 name。"""
+def render_prompt(package: str, name: str, **values: object) -> str:
+    """按命名变量渲染一次；变量值中的花括号不再解析，缺失字段立即失败。"""
 
     return load_prompt(package, name).format_map(values)
