@@ -6,7 +6,6 @@ from core.agent.behaviors import ConversationBehavior
 from core.agent.contracts import (
     CONVERSATION_BEHAVIOR,
     MemoryQueryEffect,
-    MemoryWriteEffect,
     ReplyEffect,
 )
 from core.agent.deliveries import MemoryDelivery, ReplyDelivery
@@ -42,7 +41,6 @@ def create_agent_module(
         runtime,
         {
             MemoryQueryEffect: memory_delivery,
-            MemoryWriteEffect: memory_delivery,
             ReplyEffect: ReplyDelivery(persona.persona_id, persona.name),
         },
     )

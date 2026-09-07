@@ -15,7 +15,8 @@ from core.common import (
     SceneType,
     Summary,
 )
-from core.context.contracts import (
+from core.context import (
+    ContextArchiveProtocol,
     ContextActorRef,
     ContextActorType,
     ContextEntryRecord,
@@ -27,7 +28,7 @@ from core.data.database import SQLiteDatabase
 from core.data.serialization import format_datetime, parse_datetime
 
 
-class ContextRepositoryProtocol(Protocol):
+class ContextRepositoryProtocol(ContextArchiveProtocol, Protocol):
     """DataModule 使用的 Context 持久化端口。"""
 
     def load_context(self, session_id: str) -> ContextSnapshot | None: ...
@@ -43,6 +44,38 @@ class SQLiteContextRepository:
 
     def __init__(self, database: SQLiteDatabase) -> None:
         self._database = database
+
+    def load_session(self, session_id: str) -> SessionRecord | None:
+        row = self._database.connection.execute(
+            "SELECT * FROM context_sessions WHERE session_id = ?", (session_id,),
+        ).fetchone()
+        return None if row is None else _session_from_row(row)
+
+    def load_entries(
+        self, session_id: str, after_sequence: int, through_sequence: int,
+    ) -> tuple[ContextEntryRecord, ...]:
+        """按原始序号读取归档，不过滤已被摘要覆盖的条目。"""
+
+        rows = self._database.connection.execute(
+            "SELECT * FROM context_entries "
+            "WHERE session_id = ? AND sequence > ? AND sequence <= ? ORDER BY sequence",
+            (session_id, after_sequence, through_sequence),
+        ).fetchall()
+        return tuple(_entry_from_row(row) for row in rows)
+
+    def load_summaries(
+        self, session_id: str, through_sequence: int,
+    ) -> tuple[Summary, ...]:
+        """返回边界内的摘要节点，包括已被父节点覆盖的细层摘要。"""
+
+        connection = self._database.connection
+        rows = connection.execute(
+            "SELECT * FROM context_summaries WHERE session_id = ? AND last_sequence <= ? "
+            "ORDER BY first_sequence, level DESC",
+            (session_id, through_sequence),
+        ).fetchall()
+        sources = self._summary_sources(connection, rows)
+        return tuple(_summary_from_row(row, sources.get(row["summary_id"], ())) for row in rows)
 
     def load_context(self, session_id: str) -> ContextSnapshot | None:
         """按 Session ID 恢复Context的活动快照。"""

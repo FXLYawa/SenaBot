@@ -39,8 +39,8 @@ class BodyModule:
 
         for event_type, payload_type in event_definitions:
             events.register(event_type, payload_type=payload_type)
-        for event_pattern, handler, handler_id in subscriptions:
-            events.subscribe(event_pattern, handler, handler_id=handler_id)
+        for subscription in subscriptions:
+            events.subscribe(*subscription)
 
     def register_adapter(self, adapter: BodyAdapter) -> None:
         """注册组合根创建的平台 Adapter。"""

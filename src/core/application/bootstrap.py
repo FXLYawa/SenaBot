@@ -22,7 +22,13 @@ from core.data import (
     create_data_components,
 )
 from core.event import EventBus, EventClient, ModuleEventAPI
-from core.memory import MemoryRecallPolicy, create_memory_module
+from core.memory import (
+    MemoryExtractionConfig,
+    MemoryExtractionPolicy,
+    MemoryExtractionProgressProtocol,
+    MemoryRecallPolicy,
+    create_memory_module,
+)
 from core.model import EmbeddingProvider, ModelProvider
 
 
@@ -67,6 +73,7 @@ class SenaBotConfig:
     desktop: DesktopConfig | None = field(default_factory=DesktopConfig)
     enable_context_compression: bool = True
     memory_recall: MemoryRecallPolicy = field(default_factory=MemoryRecallPolicy)
+    memory_extraction: MemoryExtractionPolicy = field(default_factory=MemoryExtractionPolicy)
 
     def __post_init__(self) -> None:
         if not self.owner_user_id.strip():
@@ -88,6 +95,7 @@ class SenaBotDependencies:
     context_repository: ContextRepositoryProtocol | None = None
     context_compressor: ContextCompressor | None = None
     adapter_factories: tuple[AdapterFactory, ...] | None = None
+    memory_extraction_progress: MemoryExtractionProgressProtocol | None = None
 
 
 def create_senabot_app(
@@ -104,12 +112,14 @@ def create_senabot_app(
     data_components = create_data_components(
         dependencies.database,
         dependencies.context_repository,
+        extraction_progress=dependencies.memory_extraction_progress,
     )
     body_module = create_body_module(app_config.owner_user_id)
     context_module = create_context_module(
         dependencies.model_provider,
         compressor=dependencies.context_compressor,
         enable_compression=app_config.enable_context_compression,
+        archive=data_components.context_archive,
     )
     memory_module = create_memory_module(
         dependencies.memory_model_provider,
@@ -117,6 +127,12 @@ def create_senabot_app(
         data_components.memory_repository,
         data_components.memory_spaces,
         app_config.memory_recall,
+        extraction=MemoryExtractionConfig(
+            memory_space_id=app_config.persona.persona_id,
+            user_id=app_config.owner_user_id,
+            policy=app_config.memory_extraction,
+        ),
+        extraction_progress=data_components.memory_extraction_progress,
     )
     agent_module = create_agent_module(
         dependencies.model_provider,

@@ -1,30 +1,26 @@
 from core.common import utc_now
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+
+from core.context import ContextReadView
 
 from .contracts import (
     MemoryQueryRequest,
     MemoryQueryResult,
-    MemoryWriteRequest,
-    MemoryWriteResult,
+    MemoryExtractionResult,
 )
 from .converters import (
-    build_candidate_scopes,
-    build_recall_context,
+    context_entry_provenance,
+    extraction_scopes,
     to_extraction_messages,
     to_extraction_summary,
-    to_provenance,
-    to_write_result,
 )
 from .executor import (
     MemoryChangeExecutionInput,
     MemoryChangeExecutionResult,
 )
 from .models import (
-    MemoryCandidate,
     MemoryExtractionContext,
-    MemoryExtractionInput,
-    MemoryExtractionMessage,
     MemoryFormationInput,
     MemoryMaterializationInput,
     MemoryRecallContext,
@@ -213,35 +209,43 @@ class MemoryService:
             :limit
         ]
 
-    async def write(
+    async def extract_and_store(
         self,
-        request: MemoryWriteRequest,
-    ) -> MemoryWriteResult:
-        """执行一次公开写入请求，串联 Extraction 与 Formation 主链路。"""
+        *,
+        operation_id: str,
+        memory_space_id: str,
+        user_id: str,
+        context: ContextReadView,
+    ) -> MemoryExtractionResult:
+        """完整处理一个原始范围；所有触发来源共用提取、形成和落库流程。"""
 
-        # 提取候选记忆,并融入相关的上下文消息和总结
-        candidates = await self.extract(
-            MemoryExtractionInput(
-                messages=to_extraction_messages(request.messages),
-                provenance=to_provenance(request),
+        # 将目标原文转换为待提取消息，将前置摘要和原文作为背景，一起交给提取器。
+        candidates = await self.extractor.extract(
+            MemoryExtractionContext(
+                new_messages=to_extraction_messages(context.entries),
+                provenance=context_entry_provenance(context.entries),
+                summary=to_extraction_summary(context.summaries),
+                recent_messages=to_extraction_messages(context.preceding_entries),
             ),
-            summary=to_extraction_summary(request.summaries),
-            recent_messages=to_extraction_messages(request.recent_messages),
         )
-
-        # 组装form阶段所需要的数据
-        recorded_at = request.recorded_at or utc_now()
-
-        # 查找记忆时的记忆边界
-        recall_context = build_recall_context(request)
-
-        # 写入记忆时的scope字段,表明记忆归属的边界
-        scopes = build_candidate_scopes(request)
-
-        # 最终写入后的结果
+        # 根据候选引用的消息 ID 查回目标条目，为每个候选构造对应的条目和事件来源。
+        entries_by_id = {entry.entry_id: entry for entry in context.entries}
+        candidates = [
+            replace(
+                candidate,
+                provenance=context_entry_provenance(tuple(
+                    entries_by_id[entry_id] for entry_id in candidate.source_message_ids
+                )),
+            )
+            for candidate in candidates
+        ]
+        # 为本批候选准备形成阶段的召回范围、记忆归属和统一记录时间。
+        scopes = extraction_scopes(user_id, context.session)
+        recall_context = MemoryRecallContext(scopes=scopes)
+        recorded_at = utc_now()
         execution_results: list[MemoryChangeExecutionResult] = []
 
-        #form阶段,即确定Memory类型和相应的写入plan,并执行写入
+        # 逐个形成候选记忆：召回相关记忆、确定类型与变更计划，再执行写入。
         for candidate in candidates:
             execution_results.append(
                 await self.form(
@@ -249,31 +253,23 @@ class MemoryService:
                         candidate=candidate,
                         recorded_at=recorded_at,
                         recall_context=recall_context,
-                        memory_space_id=request.memory_space_id,
+                        memory_space_id=memory_space_id,
                         scopes=scopes,
-                        operation_id=request.operation_id,
+                        operation_id=operation_id,
                     )
                 )
             )
 
-        # 返回写入结果
-        return to_write_result(request, execution_results)
-
-    async def extract(
-        self,
-        input_data: MemoryExtractionInput,
-        *,
-        summary: str | None,
-        recent_messages: list[MemoryExtractionMessage],
-    ) -> list[MemoryCandidate]:
-        """组装提取上下文并提取长期记忆候选。"""
-
-        # 得到组装后的上下文
-        context = MemoryExtractionContext(
-            new_messages=input_data.messages,
-            recent_messages=recent_messages,
-            summary=summary,
-            provenance=input_data.provenance,
+        # 汇总新增和更新的记忆 ID，连同本批完成边界返回给协调流程保存进度。
+        return MemoryExtractionResult(
+            operation_id=operation_id,
+            memory_space_id=memory_space_id,
+            session_id=context.session.session_id,
+            processed_through_sequence=context.through_sequence,
+            added_item_ids=tuple(
+                item.item_id for result in execution_results for item in result.added_items
+            ),
+            updated_item_ids=tuple(
+                item.item_id for result in execution_results for item in result.updated_items
+            ),
         )
-
-        return await self.extractor.extract(context)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from core.context.compression import ContextCompressor, LLMCompressor
 from core.context.events import ContextModule
+from core.context.ports import ContextArchiveProtocol
 from core.context.store import ContextStateStore
 from core.context.window import ContextWindowPolicy
 from core.model import ModelProvider
@@ -14,6 +15,7 @@ def create_context_module(
     *,
     compressor: ContextCompressor | None = None,
     enable_compression: bool = True,
+    archive: ContextArchiveProtocol | None = None,
 ) -> ContextModule:
     """创建 Context 状态、窗口策略和可选压缩能力。"""
 
@@ -24,4 +26,5 @@ def create_context_module(
         ContextStateStore(),
         ContextWindowPolicy(),
         resolved_compressor,
+        archive,
     )

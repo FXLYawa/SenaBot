@@ -6,11 +6,9 @@ from core.agent.contracts import AgentObservation, AgentObservationType
 from core.agent.dispatcher import AgentDispatcher
 from core.agent.runtime import AgentRuntime, AgentTransition
 from core.event import EventFlow
-from core.memory.contracts import (
+from core.memory import (
     MemoryQueryFailedEventData,
     MemoryQueryResult,
-    MemoryWriteFailedEventData,
-    MemoryWriteResult,
 )
 
 
@@ -40,25 +38,11 @@ class RunFlow:
         result: MemoryQueryResult = flow.payload
         await self._resume(flow, result.query_id, result, "completed")
 
-    async def handle_memory_write_result(self, flow: EventFlow) -> None:
-        """用 Memory 写入结果恢复等待中的 Run。
-        处理 memory.write.completed 事件
-        """
-
-        result: MemoryWriteResult = flow.payload
-        await self._resume(flow, result.operation_id, result, "completed")
-
     async def handle_memory_query_failed(self, flow: EventFlow) -> None:
         """用 Memory 查询失败结果恢复等待中的 Run。"""
 
         result: MemoryQueryFailedEventData = flow.payload
         await self._resume(flow, result.query_id, result, "failed")
-
-    async def handle_memory_write_failed(self, flow: EventFlow) -> None:
-        """用 Memory 写入失败结果恢复等待中的 Run。"""
-
-        result: MemoryWriteFailedEventData = flow.payload
-        await self._resume(flow, result.operation_id, result, "failed")
 
     async def _resume(
         self,
