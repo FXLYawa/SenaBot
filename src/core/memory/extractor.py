@@ -1,14 +1,20 @@
 from collections.abc import Callable
 from uuid import uuid4
 
+from core.model import (
+    ModelMessage,
+    ModelProvider,
+    ModelRequest,
+    parse_json_response,
+    render_prompt,
+    require_complete_response,
+)
+
 from .models import (
     MemoryCandidate,
     MemoryExtractionContext,
     MemoryExtractionMessage,
 )
-from .json_response import parse_json_response
-from .prompts.extraction import MEMORY_EXTRACTION_PROMPT
-from .protocols import MemoryLLMProtocol
 
 
 def _new_candidate_id() -> str:
@@ -20,10 +26,10 @@ class LLMMemoryExtractor:
 
     def __init__(
         self,
-        llm: MemoryLLMProtocol,
+        provider: ModelProvider,
         candidate_id_factory: Callable[[], str] = _new_candidate_id,
     ) -> None:
-        self._llm = llm
+        self._provider = provider
         self._candidate_id_factory = candidate_id_factory
 
     async def extract(
@@ -33,9 +39,12 @@ class LLMMemoryExtractor:
         """调用 LLM，从当前消息中提取候选长期记忆。"""
 
         prompt = self._build_prompt(context)
-        response = await self._llm.generate(prompt)
+        response = await self._provider.generate(
+            ModelRequest(messages=(ModelMessage(role="user", content=prompt),))
+        )
+        require_complete_response(response)
 
-        return self._parse_response(response, context)
+        return self._parse_response(response.text, context)
 
     def _build_prompt(
         self,
@@ -49,7 +58,9 @@ class LLMMemoryExtractor:
 
         new_messages = self._format_messages(context.new_messages)
 
-        return MEMORY_EXTRACTION_PROMPT.format(
+        return render_prompt(
+            "core.memory.prompts",
+            "extraction.txt",
             summary=summary,
             recent_messages=recent_messages,
             new_messages=new_messages,

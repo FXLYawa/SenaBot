@@ -5,8 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from core.context.common import load_prompt, render_prompt
-from core.model import ModelMessage, ModelProvider, ModelRequest
+from core.model import (
+    ModelMessage,
+    ModelProvider,
+    ModelRequest,
+    is_response_complete,
+    load_prompt,
+    render_prompt,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +100,7 @@ class LLMCompressor:
         
         result = await self._provider.generate(request)
         
-        if result.finish_reason.lower() in {"length", "max_tokens"}:
+        if not is_response_complete(result):
             return None
         return result.text.strip() or None
 

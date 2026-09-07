@@ -16,7 +16,7 @@ from core.agent.interaction import InteractionPolicy
 from core.agent.others import PersonaConfig
 from core.agent.persona import PersonaResponder
 from core.agent.runtime import AgentRuntime
-from core.model import ModelProvider
+from core.model import FallbackModelProvider, ModelProvider
 
 
 def create_agent_module(
@@ -27,11 +27,13 @@ def create_agent_module(
 ) -> AgentModule:
     """创建包含默认对话行为和 Effect 交付器的 Agent 模块。"""
 
-    responder = PersonaResponder(
-        model_provider,
-        fallback_model_provider or model_provider,
-        persona,
-    )
+    provider = model_provider
+    if (
+        fallback_model_provider is not None
+        and fallback_model_provider is not model_provider
+    ):
+        provider = FallbackModelProvider(model_provider, fallback_model_provider)
+    responder = PersonaResponder(provider, persona)
     runtime = AgentRuntime(
         {CONVERSATION_BEHAVIOR: ConversationBehavior(responder)}
     )

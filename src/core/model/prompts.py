@@ -1,3 +1,5 @@
+"""业务模块共享的文本模板加载与单次渲染工具。"""
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -12,6 +14,6 @@ def load_prompt(package: str, name: str) -> str:
 
 
 def render_prompt(package: str, name: str, /, **values: object) -> str:
-    """使用命名变量渲染提示词，模板字段缺失时立即失败。"""
+    """按命名变量渲染一次；文件名参数不占用模板变量 name。"""
 
     return load_prompt(package, name).format_map(values)

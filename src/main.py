@@ -6,8 +6,7 @@ import asyncio
 from contextlib import AsyncExitStack
 from pathlib import Path
 
-from adapter.model.openai_compatible import OpenAICompatibleProvider
-from adapter.model.openai_embedding import OpenAICompatibleEmbeddingProvider
+from adapter.model import OpenAICompatibleEmbeddingProvider, OpenAICompatibleProvider
 from config import load_model_config
 from core.application.bootstrap import (
     SenaBotConfig,
@@ -15,23 +14,9 @@ from core.application.bootstrap import (
     create_senabot_app,
 )
 from core.data import SQLiteDatabase
-from core.model import ModelMessage, ModelProvider, ModelRequest
 
 
 __all__ = ["main", "run"]
-
-
-class MemoryLLMAdapter:
-    """让 Memory 的字符串接口复用通用模型 Provider。"""
-
-    def __init__(self, provider: ModelProvider) -> None:
-        self._provider = provider
-
-    async def generate(self, prompt: str) -> str:
-        response = await self._provider.generate(
-            ModelRequest(messages=(ModelMessage(role="user", content=prompt),))
-        )
-        return response.text
 
 
 async def run(
@@ -85,7 +70,7 @@ async def run_from_config() -> None:
         await run(
             SenaBotDependencies(
                 model_provider=provider,
-                memory_llm=MemoryLLMAdapter(provider),
+                memory_model_provider=provider,
                 embedding_provider=embedding_provider,
                 database=database,
             )

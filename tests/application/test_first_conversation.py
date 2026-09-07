@@ -7,7 +7,7 @@ from core.application.bootstrap import SenaBotConfig, SenaBotDependencies, creat
 from core.body import AdapterInboundMessage, BodyOutputItemResult, OperationStatus
 from core.common import Content, SceneType
 from core.data import SQLiteDatabase
-from core.embedding import EmbeddingResponse
+from core.model import EmbeddingResponse
 from core.model import ModelResponse
 
 
@@ -59,7 +59,7 @@ class FirstConversationTests(IsolatedAsyncioTestCase):
                 with SQLiteDatabase(path) as database:
                     app = create_senabot_app(
                         SenaBotDependencies(
-                            model_provider=model, memory_llm=model,
+                            model_provider=model, memory_model_provider=model,
                             embedding_provider=Embedding(), database=database,
                             adapter_factories=(factory,),
                         ),

@@ -91,18 +91,6 @@ class MemoryRerankerProtocol(Protocol):
     ) -> list[MemoryRetrievalCandidate]: ...
 
 
-class MemoryLLMProtocol(Protocol):
-    """
-    Memory提取器所需的最小LLM调用能力
-
-    """
-
-    async def generate(
-        self,
-        prompt: str,
-    ) -> str: ...
-
-
 class MemoryRepositoryProtocol(Protocol):
     """新 MemoryItem 变更链路所依赖的持久化端口。"""
 
