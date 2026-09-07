@@ -1,0 +1,7 @@
+# Reserved configuration: the current application does NOT load this file.
+# Requires a SiliconFlow rerank adapter and composition-root wiring.
+provider = "siliconflow"
+base_url = "https://api.siliconflow.cn/v1"
+model = "Qwen/Qwen3-Reranker-8B"
+api_key_env = "SENABOT_EMBEDDING_API_KEY"
+timeout_seconds = 30.0

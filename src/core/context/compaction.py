@@ -44,7 +44,7 @@ class CompactionFlow:
         """生成至多一个压缩请求，并在发布前占用对应 Session槽位"""
 
         session_id = snapshot.session.session_id
-        if snapshot.session.is_closed or session_id in self._scheduled:
+        if self._compressor is None or snapshot.session.is_closed or session_id in self._scheduled:
             return None
         # 规划压缩请求，若不需要压缩则返回 None
         request = self._window.plan_compaction(snapshot)
@@ -59,14 +59,12 @@ class CompactionFlow:
         request: CompactionRequestData = flow.payload
         result = None
         try:
-            summary_text = ""
-            if self._compressor is not None:
-                # 执行压缩，若无法生成完整摘要则返回 None
-                generated = await self._compressor.compress(request.input)
-                if generated is None:
-                    return
-                summary_text = generated
-            result = self._store.apply_compaction(request, summary_text)
+            if self._compressor is None:
+                return
+            generated = await self._compressor.compress(request.input)
+            if generated is None or not generated.strip():
+                return
+            result = self._store.apply_compaction(request, generated)
         finally:
             self._scheduled.discard(request.session_id)
         if result is None:
