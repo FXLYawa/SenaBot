@@ -24,9 +24,11 @@ class MemoryExtractionPolicy:
     """数量按原始条目序号跨度计算；触发阈值与单批上限相互独立。"""
 
     enabled: bool = True
-    # 按原始条目数设置触发阈值和单批处理上限。
+    # 未处理的原始条目达到该数量后，启动一次自动提取。
     entry_threshold: int = 20
+    # 一次提取最多消费的原始条目数；积压超过上限时拆成多个批次。
     batch_size: int = 40
+    # Context 返回后，Memory 完成提取与落库所允许的最长处理时间。
     processing_timeout_seconds: float = 300.0
 
     def __post_init__(self) -> None:
@@ -74,8 +76,11 @@ class MemoryExtractionFlow:
 
     def __init__(
         self,
+        # 执行 Memory 的提取、审查与持久化主流程。
         service: MemoryService,
+        # 读取并保存每个记忆空间、会话已成功处理到的原始序号。
         progress: MemoryExtractionProgressProtocol,
+        # 约束当前 Flow 接受的来源、写入目标和批处理策略。
         config: MemoryExtractionConfig,
     ) -> None:
         self._service = service
