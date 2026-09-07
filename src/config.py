@@ -6,6 +6,7 @@ import os
 import tomllib
 from dataclasses import dataclass
 from os import PathLike
+from typing import Literal, overload
 
 
 class ConfigError(Exception):
@@ -23,7 +24,30 @@ class ModelConfig:
     timeout_seconds: float
 
 
+@dataclass(frozen=True, slots=True)
+class RerankerConfig(ModelConfig):
+    """重排专用配置，接口路径由配置文件提供。"""
+
+    endpoint: str
+
+
 def load_model_config(path: str | PathLike[str]) -> ModelConfig:
+    return _load_config(path, "openai_compatible")
+
+
+def load_reranker_config(path: str | PathLike[str]) -> RerankerConfig:
+    return _load_config(path, "rerank_compatible")
+
+
+@overload
+def _load_config(path: str | PathLike[str], expected_provider: Literal["openai_compatible"]) -> ModelConfig: ...
+
+
+@overload
+def _load_config(path: str | PathLike[str], expected_provider: Literal["rerank_compatible"]) -> RerankerConfig: ...
+
+
+def _load_config(path: str | PathLike[str], expected_provider: str) -> ModelConfig:
     """读取并校验模型 TOML 配置，同时解析 API Key 环境变量。"""
     try:
         # 读取TOML文件
@@ -31,7 +55,7 @@ def load_model_config(path: str | PathLike[str]) -> ModelConfig:
             raw = tomllib.load(config_file)
 
         provider = _required_string(raw, "provider")
-        if provider != "openai_compatible":
+        if provider != expected_provider:
             raise ValueError(f"unsupported model provider: {provider}")
 
         base_url = _required_string(raw, "base_url")
@@ -48,13 +72,16 @@ def load_model_config(path: str | PathLike[str]) -> ModelConfig:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be greater than 0")
 
-        return ModelConfig(
+        values = dict(
             provider=provider,
             base_url=base_url,
             model=model,
             api_key=api_key,
             timeout_seconds=timeout_seconds,
         )
+        if expected_provider == "rerank_compatible":
+            return RerankerConfig(**values, endpoint=_required_string(raw, "endpoint"))
+        return ModelConfig(**values)
     except ConfigError:
         raise
     except (OSError, KeyError, TypeError, ValueError, tomllib.TOMLDecodeError) as exc:

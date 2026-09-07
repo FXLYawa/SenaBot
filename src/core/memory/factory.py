@@ -9,10 +9,10 @@ from core.memory.executor import MemoryChangeExecutor
 from core.memory.extractor import LLMMemoryExtractor
 from core.memory.materialization import LLMMemoryMaterializer
 from core.memory.protocols import (
+    MemoryRerankerProtocol,
     MemoryRepositoryProtocol,
     MemorySpaceRouterProtocol,
 )
-from core.memory.reranker import SimpleMemoryReranker
 from core.memory.reviewer import LLMMemoryReviewer
 from core.memory.service import MemoryRecallPolicy, MemoryService
 
@@ -23,6 +23,8 @@ def create_memory_module(
     repository: MemoryRepositoryProtocol,
     memory_spaces: MemorySpaceRouterProtocol,
     recall_policy: MemoryRecallPolicy | None = None,
+    *,
+    reranker: MemoryRerankerProtocol | None = None,
 ) -> MemoryModule:
     """使用外部 LLM、数据端口和 MVP 检索组件创建 Memory 模块。"""
 
@@ -31,7 +33,7 @@ def create_memory_module(
         extractor=LLMMemoryExtractor(model_provider),
         embedder=embedder,
         memory_spaces=memory_spaces,
-        reranker=SimpleMemoryReranker(),
+        reranker=reranker,
         materializer=LLMMemoryMaterializer(model_provider),
         reviewer=LLMMemoryReviewer(model_provider),
         executor=MemoryChangeExecutor(repository, indexer=embedder),
