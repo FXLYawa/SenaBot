@@ -36,10 +36,19 @@ function portOpen() {
 async function stopBackend() {
   const current = child;
   if (!current) return;
-  await new Promise(resolve => {
-    current.once("close", resolve);
-    current.kill();
-  });
+  const closed = new Promise(resolve => current.once("close", resolve));
+  if (process.platform === "win32") {
+    // Windows venv 的 python.exe 是启动器；仅 kill 它会遗留真正监听端口的子进程。
+    await new Promise((resolve, reject) => {
+      const killer = spawn("taskkill", ["/PID", String(current.pid), "/T", "/F"], {
+        windowsHide: true, stdio: "ignore",
+      });
+      killer.once("error", () => reject(new Error("无法停止后端进程")));
+      killer.once("close", code => code === 0 || current.exitCode !== null
+        ? resolve() : reject(new Error("后端停止失败，请关闭后重试")));
+    });
+  } else current.kill();
+  await closed;
 }
 async function startBackend() {
   state.running = false;

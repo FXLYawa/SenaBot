@@ -467,3 +467,20 @@ button {
     margin-top: 8px;
   }
 }
+
+/* 密钥设置：输入、运行状态和操作使用同一列对齐。 */
+.drawer .apiKeys label:first-of-type { margin-top: 0; }
+.backendStatus {
+  margin: 16px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f4f4f4;
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.backendStatus.isRunning { color: #436550; background: #f0f5f1; }
+.keyActions { display: grid; gap: 10px; }
+.keyActions .saveButton { min-height: 44px; font-size: 13px; line-height: 1.5; }
+.saveButton:disabled { opacity: .55; cursor: wait; }

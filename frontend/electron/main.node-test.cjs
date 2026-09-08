@@ -33,7 +33,13 @@ async function fixture() {
     return socket;
   } };
   function spawn(executable, args, options) {
-    const proc = new EventEmitter(); proc.exitCode = null; proc.options = options;
+    if (executable === 'taskkill') {
+      const target = children.find(c => String(c.pid) === args[1]);
+      assert.deepEqual(Array.from(args).slice(2), ['/T', '/F']);
+      target.kill();
+      const killer = new EventEmitter(); setImmediate(() => killer.emit('close', 0)); return killer;
+    }
+    const proc = new EventEmitter(); proc.pid = children.length + 100; proc.exitCode = null; proc.options = options;
     proc.stdout = new EventEmitter(); proc.stderr = new EventEmitter();
     proc.kill = () => { proc.exitCode = 0; setImmediate(() => proc.emit('close', 0)); };
     children.push(proc); return proc;
