@@ -36,7 +36,7 @@ def create_agent_module(
     runtime = AgentRuntime(
         {CONVERSATION_BEHAVIOR: ConversationBehavior(responder)}
     )
-    memory_delivery = MemoryDelivery()
+    memory_delivery = MemoryDelivery(persona.persona_id)
     dispatcher = AgentDispatcher(
         runtime,
         {

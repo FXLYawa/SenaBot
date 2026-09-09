@@ -6,13 +6,6 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, TypeAlias
 
-from core.common import (
-    OutputRoute,
-    SceneInfo,
-    SourceInfo,
-)
-
-
 """Agent 内部运行模型"""
 
 
@@ -54,6 +47,7 @@ class AgentRun:
     behavior_state: object # Behavior 的私有状态，Runtime 不解释负责解释
     pending_operation: PendingOperation | None = None # 是否在等待外部行为，没有的话为 None
     step_count: int = 0 # 记录 Behavior step 的次数
+    delivery_bindings: tuple[object, ...] = ()  # 随 Run 保存的纯数据，由具体 Delivery 解释。
 
 
 """
@@ -65,26 +59,17 @@ Effect是Behavior到Dispatcher的语义契约
 
 @dataclass(frozen=True, slots=True)
 class ReplyEffect:
-    """表示sena想要回复用户的消息"""
+    """回复本次交互的内容和引用选择；None 表示不引用消息。"""
 
     text: str # 回复文本
-    session_id: str # 回复的会话id
-    trigger_event_id: str # 触发本次回复的事件id
-    output_route: OutputRoute # 回复的输出路由
-    scene: SceneInfo # 当前的交互场景
     reply_to_message_id: str | None = None  # 是否要引用某条消息进行回复
 
 
 @dataclass(frozen=True, slots=True)
 class MemoryQueryEffect:
-    """Behavior 想要请求记忆查询"""
+    """在本次交互的身份和场景范围内查询记忆。"""
 
-    operation_id: str # 用于把外部结果重新关联到当前 AgentRun
     query: str # 检索内容
-    requester: SourceInfo # 请求者信息
-    session_id: str # 会话id
-    scene: SceneInfo # 当前交互场景
-    persona_id: str # 角色id
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +127,7 @@ class AgentRunRequestEventData:
     session_id: str | None
     behavior_type: str 
     behavior_state: object
+    delivery_bindings: tuple[object, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

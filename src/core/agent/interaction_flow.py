@@ -9,6 +9,7 @@ from core.agent.contracts import (
     AgentRunRequestEventData,
 )
 from core.agent.interaction import InteractionPolicy
+from core.agent.deliveries import MemoryQueryBinding, ReplyBinding
 from core.agent.state import ConversationState
 from core.context import ContextEntryRecord, ContextPreparedEventData
 from core.event import EventFlow
@@ -61,14 +62,31 @@ def _run_request(
     prepared: ContextPreparedEventData,
     user_text: str,
 ) -> AgentRunRequestEventData:
-    """构造主对话 State；其他触发来源仍可创建其他 Behavior Run。"""
+    """分别构造行为状态、回复绑定和查询绑定，并关联到同一个 Run。"""
 
     return AgentRunRequestEventData(
         run_id=new_id("run"),
         session_id=prepared.session_id,
         behavior_type=CONVERSATION_BEHAVIOR,
         behavior_state=ConversationState(
-            prepared=prepared,
             user_text=user_text,
+            entries=prepared.entries,
+            summaries=prepared.summaries,
+            source=prepared.source,
+            scene=prepared.scene,
+            reply_to_message_id=prepared.reply_to_message_id,
+        ),
+        delivery_bindings=(
+            ReplyBinding(
+                route=prepared.output_route,
+                scene=prepared.scene,
+                context_session_id=prepared.session_id,
+                source_event_id=prepared.trigger_event_id,
+            ),
+            MemoryQueryBinding(
+                requester=prepared.source,
+                session_id=prepared.session_id,
+                scene=prepared.scene,
+            ),
         ),
     )

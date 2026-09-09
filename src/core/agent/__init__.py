@@ -1,5 +1,6 @@
 from core.agent.contracts import (
     AgentRun,
+    AgentRunRequestEventData,
     AgentRunCompletedEventData,
     AgentStepResult,
     Behavior,
@@ -11,6 +12,7 @@ from core.agent.runtime import AgentRuntime
 __all__ = [
     "AgentRunCompletedEventData",
     "AgentRun",
+    "AgentRunRequestEventData",
     "AgentStepResult",
     "AgentRuntime",
     "Behavior",
