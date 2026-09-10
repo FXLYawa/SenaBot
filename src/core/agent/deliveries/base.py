@@ -2,31 +2,39 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
-from core.event import EventFlow
-
-
 EffectT = TypeVar("EffectT", contravariant=True)
+BindingT = TypeVar("BindingT")
 
 
-class EffectDelivery(Protocol[EffectT]):
-    """把一种外部副作用 Effect 转换为公开事件。
-
-    返回关联 ID 表示 Run 需要等待结果；返回 None 表示
-    事件发出后无需等待。Dispatcher 统一维护等待/恢复不变量。
+@dataclass(frozen=True, slots=True)
+class PreparedDelivery:
+    """一次效果交付所需的事件及等待关联，由 Dispatcher 按序发布。
+    表示转换出了什么内容，以供交付
     """
 
-    def pending_operation_id(self, effect: EffectT) -> str | None:
-        """返回需要等待的操作 ID; 不等待时返回 None。"""
+    events: tuple[tuple[str, object], ...]
+    pending_operation_id: str | None = None
+
+
+class EffectDelivery(Protocol[EffectT, BindingT]):
+    """声明所需的绑定类型，并将语义效果和绑定数据转换为下游请求。
+    定义了如何将 Behavior 的 Effect 转化为 Dispatcher 可发布的事件序列，以及如何关联等待外部结果
+    """
+
+    @property
+    def binding_type(self) -> type[BindingT] | None:
+        """Dispatcher 按此类型匹配 Run 绑定；None 表示 prepare 接收空绑定。"""
 
         ...
 
-    def emit(
+    def prepare(
         self,
-        flow: EventFlow,
         effect: EffectT,
-    ) -> None:
-        """发布执行该 Effect 所需的公开事件。"""
+        binding: BindingT,
+    ) -> PreparedDelivery:
+        """构造请求并生成关联 ID，准备完成后由 Dispatcher 登记等待和发布。"""
 
         ...

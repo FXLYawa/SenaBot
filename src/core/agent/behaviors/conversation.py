@@ -13,10 +13,12 @@ from core.agent.contracts import (
 )
 from core.agent.persona import PersonaResponder
 from core.agent.state import ConversationState
-from core.common import Summary, new_id
-from core.context import ContextEntryType, ContextPreparedEventData
-from core.memory.contracts import MemoryQueryFailedEventData, MemoryQueryResult
-from core.memory.models import Experience, Fact, Knowledge, MemoryItem, Understanding
+from core.common import Summary
+from core.context import ContextEntryType
+from core.memory import (
+    Experience, Fact, Knowledge, MemoryItem, MemoryQueryFailedEventData,
+    MemoryQueryResult, Understanding,
+)
 from core.model import ModelMessage, render_prompt
 
 
@@ -34,7 +36,7 @@ class ConversationBehavior:
         """对话行为的入口, 每轮交互都是一个 step"""
         current = _require_state(state)
         if observation.kind is AgentObservationType.STARTED:
-            return AgentStepResult(current, (self._memory_query(current),))
+            return AgentStepResult(current, (MemoryQueryEffect(query=current.user_text),))
         # 对记忆查询结果的处理
         if isinstance(observation.payload, MemoryQueryResult):
             return await self._reply_with_context(
@@ -52,23 +54,19 @@ class ConversationBehavior:
             ),
         )
 
-    def _memory_query(self, state: ConversationState) -> MemoryQueryEffect:
-        return MemoryQueryEffect(
-            operation_id=new_id("op_memory_query"),
-            query=state.user_text,
-            requester=state.prepared.source,
-            session_id=state.prepared.session_id,
-            scene=state.prepared.scene,
-            persona_id=self._responder.persona_id,
-        )
-
     async def _reply_with_context(self, state: ConversationState) -> AgentStepResult:
         """根据当前对话上下文和记忆查询结果生成回复"""
         # 先组装消息，然后调用 PersonaResponder 生成回复，并使用对应的 ReplyEffect 返回
         response = await self._responder.generate(_messages(state), temperature=0.7)
         return AgentStepResult(
             next_state=state,
-            effects=(_reply_effect(state.prepared, response.text), FinishEffect()),
+            effects=(
+                ReplyEffect(
+                    text=response.text,
+                    reply_to_message_id=state.reply_to_message_id,
+                ),
+                FinishEffect(),
+            ),
         )
 
 
@@ -81,27 +79,11 @@ def _require_state(state: object) -> ConversationState:
     return state
 
 
-def _reply_effect(
-    prepared: ContextPreparedEventData,
-    text: str,
-) -> ReplyEffect:
-    """根据当前对话上下文和生成的文本构造 ReplyEffect"""
-    return ReplyEffect(
-        text=text,
-        session_id=prepared.session_id,
-        trigger_event_id=prepared.trigger_event_id,
-        output_route=prepared.output_route,
-        scene=prepared.scene,
-        reply_to_message_id=prepared.reply_to_message_id,
-    )
-
-
 def _messages(state: ConversationState) -> tuple[ModelMessage, ...]:
     """组装当前 Conversation 的模型输入; Context 只提供上下文快照"""
 
-    prepared = state.prepared
     messages: list[ModelMessage] = []
-    history = _render_summaries(prepared.summaries)
+    history = _render_summaries(state.summaries)
     # 加入历史摘要
     if history:
         messages.append(
@@ -129,7 +111,7 @@ def _messages(state: ConversationState) -> tuple[ModelMessage, ...]:
             )
         )
     # 加入当前对话条目
-    for entry in prepared.entries:
+    for entry in state.entries:
         if entry.entry_type == ContextEntryType.USER_MESSAGE:
             messages.append(ModelMessage("user", entry.text()))
         elif entry.entry_type == ContextEntryType.SENA_MESSAGE:

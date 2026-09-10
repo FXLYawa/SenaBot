@@ -66,12 +66,14 @@ class AgentRuntime:
                 f"Behavior is not available: {request.behavior_type}",
             )
         _require_pure_data(request.behavior_state) # 数据校验，确保只有纯数据内容
+        _require_pure_data(request.delivery_bindings)
         # 构造对应的agentrun
         run = AgentRun(
             run_id=request.run_id,
             session_id=request.session_id,
             behavior_type=request.behavior_type,
             behavior_state=request.behavior_state,
+            delivery_bindings=request.delivery_bindings,
         )
         self._runs[run.run_id] = run
         return await self._step(
@@ -167,6 +169,7 @@ class AgentRuntime:
             session_id=request.session_id,
             behavior_type=request.behavior_type,
             behavior_state=request.behavior_state,
+            delivery_bindings=request.delivery_bindings,
         )
         return AgentTransition(run, failure=FailEffect(code, message))
 

@@ -16,24 +16,16 @@ from core.agent.contracts import (
     FailEffect,
     FinishEffect,
 )
-from core.agent.deliveries import EffectDelivery
+from core.agent.deliveries import EffectDelivery, PreparedDelivery
 from core.agent.runtime import AgentRuntime, AgentTransition
 from core.event import EventFlow
-
-
-@dataclass(frozen=True, slots=True)
-class _DeliveryCall:
-    """一个已经解析完成、可以安全执行的副作用。"""
-
-    effect: object # Behavior 产生的原始副作用
-    delivery: EffectDelivery[Any] # 负责把它转换成公开事件的适配器
 
 
 @dataclass(frozen=True, slots=True)
 class _DispatchPlan:
     """一个 Step 通过校验后得到的完整执行计划。"""
 
-    calls: tuple[_DeliveryCall, ...] # 按声明顺序执行的副作用列表
+    events: tuple[tuple[str, object], ...] # 按 Effect 及其内部声明顺序汇总的事件。
     pending_operation_id: str | None # 需要等待结果时使用的关联 ID；不等待时为空
 
 
@@ -43,7 +35,7 @@ class AgentDispatcher:
     def __init__(
         self,
         runtime: AgentRuntime,
-        deliveries: Mapping[type[object], EffectDelivery[Any]],
+        deliveries: Mapping[type[object], EffectDelivery[Any, Any]],
     ) -> None:
         self._runtime = runtime # 控制 Run 生命周期的 Runtime
         self._deliveries = dict(deliveries) # 保存 Effect 类型到交付适配器的映射
@@ -67,7 +59,7 @@ class AgentDispatcher:
             return
 
         # 校验 Step 并生成执行计划
-        plan = self._plan_step(step)
+        plan = self._plan_step(step, transition.run.delivery_bindings)
         # 如果校验失败, 直接终止 Run 并发布失败事件
         if isinstance(plan, FailEffect):
             self._fail(flow, transition.run.run_id, plan)
@@ -75,7 +67,11 @@ class AgentDispatcher:
         # 执行计划
         self._execute_plan(flow, transition.run.run_id, plan)
 
-    def _plan_step(self, step: AgentStepResult) -> _DispatchPlan | FailEffect:
+    def _plan_step(
+        self,
+        step: AgentStepResult,
+        bindings: tuple[object, ...],
+    ) -> _DispatchPlan | FailEffect:
         """校验控制 Effect, 并把所有副作用解析成不产生事件的执行计划。"""
 
         # 1. 检查是否有失败 Effect, 如果有则直接返回失败
@@ -98,18 +94,15 @@ class AgentDispatcher:
             if not isinstance(effect, (FailEffect, FinishEffect))
         ]
         
-        # 4. 对每个外部副作用 Effect, 查找对应的交付适配器, 并生成执行计划
-        calls: list[_DeliveryCall] = []
+        # 4. 匹配各 Delivery 所需的绑定并准备请求，整步通过校验后统一发布。
+        events: list[tuple[str, object]] = []
         pending_operation_ids: list[str] = []
         for effect in external_effects:
-            delivery = self._deliveries.get(type(effect))
-            if delivery is None:
-                return FailEffect(
-                    "effect_not_supported",
-                    f"No delivery is installed for {type(effect).__name__}.",
-                )
-            operation_id = delivery.pending_operation_id(effect)
-            calls.append(_DeliveryCall(effect, delivery))
+            prepared = self._prepare_delivery(effect, bindings)
+            if isinstance(prepared, FailEffect):
+                return prepared
+            events.extend(prepared.events)
+            operation_id = prepared.pending_operation_id
             if operation_id is not None:
                 pending_operation_ids.append(operation_id)
 
@@ -122,7 +115,7 @@ class AgentDispatcher:
         pending_operation_id = (
             pending_operation_ids[0] if pending_operation_ids else None
         )
-        # 如果没有需要等待的 operation_id，且没有 Finish Effect
+        # 等待外部结果和结束当前 Run 是互斥的步骤结果。
         finish_requested = bool(finishes)
         if pending_operation_id is not None and finish_requested:
             return FailEffect(
@@ -134,7 +127,33 @@ class AgentDispatcher:
                 "step_stalled",
                 "Behavior neither waited for an operation nor finished the run.",
             )
-        return _DispatchPlan(tuple(calls), pending_operation_id)
+        return _DispatchPlan(tuple(events), pending_operation_id)
+
+    def _prepare_delivery(
+        self, effect: object, bindings: tuple[object, ...],
+    ) -> PreparedDelivery | FailEffect:
+        """按注册类型匹配交付器及唯一绑定，再由交付器解释具体数据。"""
+
+        delivery = self._deliveries.get(type(effect))
+        if delivery is None:
+            return FailEffect(
+                "effect_not_supported",
+                f"No delivery is installed for {type(effect).__name__}.",
+            )
+        binding = None
+        if delivery.binding_type is not None:
+            matches = [item for item in bindings if type(item) is delivery.binding_type]
+            if len(matches) != 1:
+                return FailEffect(
+                    "delivery_binding_invalid",
+                    f"{type(effect).__name__} requires exactly one "
+                    f"{delivery.binding_type.__name__} binding; found {len(matches)}.",
+                )
+            binding = matches[0]
+        try:
+            return delivery.prepare(effect, binding)
+        except (ValueError, TypeError, LookupError) as error:
+            return FailEffect("effect_invalid", str(error))
 
     def _execute_plan(
         self,
@@ -147,10 +166,10 @@ class AgentDispatcher:
         # 先登记可选等待
         if plan.pending_operation_id is not None:
             self._runtime.wait_for(run_id, plan.pending_operation_id,)
-        # 按声明顺序发布计划中的所有副作用
-        for call in plan.calls:
-            call.delivery.emit(flow, call.effect)
-        # 如果没有需要等待的 operation_id，且没有 Finish Effect，则直接完成 Run
+        # 请求与关联 ID 已在准备阶段固定，按 Effect 顺序发布对应事件。
+        for event_type, payload in plan.events:
+            flow.emit(event_type, payload)
+        # 通过计划校验且无需等待时，本步已明确请求结束 Run。
         if plan.pending_operation_id is None:
             self._complete(flow, run_id)
 

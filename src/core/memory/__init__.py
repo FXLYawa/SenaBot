@@ -10,6 +10,7 @@ from core.memory.contracts import (
     MemoryQueryResult,
 )
 from core.memory.service import MemoryRecallPolicy
+from core.memory.models import Experience, Fact, Knowledge, MemoryItem, Understanding
 from core.memory.protocols import (
     MemoryExtractionProgressProtocol,
     MemoryRepositoryProtocol,
@@ -17,6 +18,11 @@ from core.memory.protocols import (
 )
 
 __all__ = [
+    "Experience",
+    "Fact",
+    "Knowledge",
+    "MemoryItem",
+    "Understanding",
     "MemoryExtractionConfig",
     "MemoryExtractionFailedEventData",
     "MemoryExtractionPolicy",
