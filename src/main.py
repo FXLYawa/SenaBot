@@ -9,7 +9,7 @@ from pathlib import Path
 from adapter.model import OpenAICompatibleEmbeddingProvider, OpenAICompatibleProvider
 from adapter.model.reranker import MemoryReranker
 from config import load_model_config, load_reranker_config
-from core.application.bootstrap import (
+from application import (
     SenaBotConfig,
     SenaBotDependencies,
     create_senabot_app,
