@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
+from core.agent.contracts import PendingOperation
+
 EffectT = TypeVar("EffectT", contravariant=True)
 BindingT = TypeVar("BindingT")
 
@@ -16,7 +18,7 @@ class PreparedDelivery:
     """
 
     events: tuple[tuple[str, object], ...]
-    pending_operation_id: str | None = None
+    pending_operation: PendingOperation | None = None
 
 
 class EffectDelivery(Protocol[EffectT, BindingT]):
