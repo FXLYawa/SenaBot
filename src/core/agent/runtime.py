@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence, Set
+import asyncio
+from collections.abc import AsyncGenerator, Mapping, Sequence, Set
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, fields, is_dataclass, replace
 from datetime import date, datetime, time
 from enum import Enum
@@ -53,21 +55,27 @@ class AgentRuntime:
         self.max_steps = max_steps # 限制单次 Run 的最大 step 次数, 防止无限循环
         self._runs: dict[str, AgentRun] = {} # 保存当前所有 Run 的运行状态, key 为 run_id
         self._operation_to_run: dict[str, str] = {} # 保存当前所有等待外部结果的操作, key 为 operation_id, value 为 run_id
+        self._run_locks: dict[str, asyncio.Lock] = {}  # 串行化资源随 Run 创建和释放。
 
-    async def start(self, request: AgentRunRequestEventData) -> AgentTransition:
-        """创建 Run 并执行第一次 Behavior.step()。"""
+    @asynccontextmanager
+    async def start(
+        self, request: AgentRunRequestEventData,
+    ) -> AsyncGenerator[AgentTransition | None, None]:
+        """创建 Run，并执行首次 step"""
 
         if request.run_id in self._runs:
-            return self._failed_request(request, "run_conflict", "AgentRun already exists.")
+            yield self._failed_request(request, "run_conflict", "AgentRun already exists.")
+            return
         if request.behavior_type not in self._behaviors:
-            return self._failed_request(
+            yield self._failed_request(
                 request,
                 "behavior_not_found",
                 f"Behavior is not available: {request.behavior_type}",
             )
+            return
         _require_pure_data(request.behavior_state) # 数据校验，确保只有纯数据内容
         _require_pure_data(request.delivery_bindings)
-        # 构造对应的agentrun
+        # 保存本次运行的行为状态和交付绑定。每个 Run 使用自己的锁，分别处理各自的结果。
         run = AgentRun(
             run_id=request.run_id,
             session_id=request.session_id,
@@ -76,59 +84,97 @@ class AgentRuntime:
             delivery_bindings=request.delivery_bindings,
         )
         self._runs[run.run_id] = run
-        return await self._step(
-            run,
-            AgentObservation(AgentObservationType.STARTED),
-        )
+        lock = self._run_locks[run.run_id] = asyncio.Lock()
+        try:
+            async with lock:
+                # 首次 step 完成后，通过 yield 将结果交给 RunFlow 调用 Dispatcher。
+                # 此时仍持有锁；等 Dispatcher 处理完、RunFlow 退出 async with 后才释放。
+                yield await self._step(run, AgentObservation(AgentObservationType.STARTED))
+        except (Exception, asyncio.CancelledError):
+            # 本步未能完成交付时终止等待；异常继续交给事件层记录和处理。
+            if self._runs.get(run.run_id) is run:
+                self._remove(run.run_id)
+            raise
 
+    @asynccontextmanager
     async def resume(
         self,
         operation_id: str,
         observation: AgentObservation,
-    ) -> AgentTransition | None:
-        """用外部结果恢复对应 Run；不属于本 Runtime 的结果直接忽略。"""
+    ) -> AsyncGenerator[AgentTransition | None, None]:
+        """串行消费单个结果，锁覆盖 Behavior 的 step，以及 plan 的应用"""
 
-        run_id = self._operation_to_run.get(operation_id) # 查找对应的 run_id
+        # 根据返回结果的 operation_id 找到正在等待它的 Run；找不到就忽略这个结果。
+        run_id = self._operation_to_run.get(operation_id)
         if run_id is None:
-            return None
-        run = self._runs.get(run_id) # 查找对应的 AgentRun
-        if run is None or run.pending_operation is None:
-            raise RuntimeError("Agent pending operation state is inconsistent")
-        pending = run.pending_operation # 查找对应的 PendingOperation
-        if pending.operation_id != operation_id:
-            raise RuntimeError("Agent pending operation ID is inconsistent")
-        # 清除等待关联，恢复对应的 Run
-        self._operation_to_run.pop(operation_id)
-        run.pending_operation = None
-        return await self._step(run, observation)
+            yield None
+            return
+        run = self._require_run(run_id)
+        lock = self._run_locks[run_id]
+        consumed = False  # 记录本次调用是否已经取走了对应的 pending，供异常处理时判断。
+        try:
+            async with lock:
+                # 排队期间 Run 可能结束，或同一操作的另一个结果已被消费。
+                if self._runs.get(run_id) is not run or operation_id not in run.pending_operations:
+                    yield None
+                    return
+                # 这个操作已经返回结果，从 Run 的等待列表和操作到 Run 的映射中移除它。
+                # 其他操作照常等待；同一个结果再次到达时会被忽略。
+                pending = run.pending_operations.pop(operation_id)
+                self._operation_to_run.pop(operation_id)
+                consumed = True
+                # 将 pending 中的 request_key 交给 Behavior，让它知道是哪项请求返回了。
+                # 等本次 step 及 Dispatcher 的处理都完成后，同一 Run 才能处理下一个结果。
+                yield await self._step(
+                    run, replace(observation, request_key=pending.request_key),
+                )
+        except (Exception, asyncio.CancelledError):
+            # 若本次处理出错或被取消，而结果已由本次调用取走、或仍在等待处理，就清理整个 Run。
+            # is run 确保清理的是原来的运行；若另一调用已取走重复结果，则保留 Run。
+            if self._runs.get(run_id) is run and (
+                consumed or operation_id in run.pending_operations
+            ):
+                self._remove(run_id)
+            raise
 
     def wait_for(
         self,
         run_id: str,
-        operation_id: str,
+        operations: Sequence[PendingOperation],
     ) -> None:
-        """将 Run 与唯一外部操作关联。"""
+        """完整校验本批操作后追加等待，保留此 Run 已登记的其他请求。"""
 
         run = self._require_run(run_id) # 查找对应的 AgentRun
-        if run.pending_operation is not None:
-            raise RuntimeError("AgentRun already has a pending operation")
-        if operation_id in self._operation_to_run:
-            raise RuntimeError(f"Agent operation already exists: {operation_id}")
-        # 将 Run 与外部操作关联
-        run.pending_operation = PendingOperation(operation_id=operation_id,)
-        self._operation_to_run[operation_id] = run_id
+        # 先检查整批新请求，再登记。operation_id 不能与任何 Run 正在等待的操作重复；
+        # request_key 只需在当前 Run 的未完成请求中唯一，本批请求之间也要检查。
+        additions: dict[str, PendingOperation] = {}
+        request_keys = {pending.request_key for pending in run.pending_operations.values()}
+        for pending in operations:
+            if not pending.operation_id.strip() or not pending.request_key.strip():
+                raise ValueError("Agent operation ID and request key must not be blank")
+            if pending.operation_id in self._operation_to_run or pending.operation_id in additions:
+                raise ValueError(f"Agent operation already exists: {pending.operation_id}")
+            if pending.request_key in request_keys:
+                raise ValueError(f"Agent request key already pending: {pending.request_key}")
+            additions[pending.operation_id] = pending
+            request_keys.add(pending.request_key)
+        # 检查通过后，一起保存新 pending 和操作到 Run 的映射，后续结果就能找到对应的 Run。
+        run.pending_operations.update(additions)
+        self._operation_to_run.update((operation_id, run_id) for operation_id in additions)
 
     def complete(self, run_id: str, outcome: str = "completed") -> AgentTransition:
         """结束 Run 并返回完成终态。"""
         run = self._require_run(run_id)
-        snapshot = replace(run)
+        # 先保存结束时的状态，供 Dispatcher 发布完成事件，再清理 Run 和剩余 pending。
+        snapshot = _snapshot(run)
         self._remove(run_id)
         return AgentTransition(snapshot, outcome=outcome)
 
     def fail(self, run_id: str, failure: FailEffect) -> AgentTransition:
         """结束 Run 并返回失败终态。"""
         run = self._require_run(run_id)
-        snapshot = replace(run)
+        # 保存失败时的状态，并清理 Run 和剩余 pending；之后返回的结果会被忽略。
+        snapshot = _snapshot(run)
         self._remove(run_id)
         return AgentTransition(snapshot, failure=failure)
 
@@ -136,26 +182,33 @@ class AgentRuntime:
         self,
         run: AgentRun,
         observation: AgentObservation, # Behavior.step() 的输入数据
-    ) -> AgentTransition:
+    ) -> AgentTransition | None:
         """执行一次 Behavior.step() 并返回下一步的状态和 Effect。"""
         if run.step_count >= self.max_steps:
             return self.fail(
                 run.run_id,
                 FailEffect("step_limit_exceeded", "AgentRun exceeded its step limit."),
             )
-        # Behavior.step() 的调用，返回下一步的状态和 Effect
+        # 将当前状态和本次结果交给 Behavior。它可以发出新的 Effect，也可以只保存结果、继续等待。
+        # 检查返回的状态是否为纯数据，再保存到 Run 中。
         behavior = self._behaviors[run.behavior_type]
         try:
             result = await behavior.step(run.behavior_state, observation)
             _require_pure_data(result.next_state)
         except Exception as exc:
+            if self._runs.get(run.run_id) is not run:
+                return None
             return self.fail(
                 run.run_id,
                 FailEffect("behavior_failed", f"{type(exc).__name__}: {exc}"),
             )
+        # 其他结果在排队时被取消可能已终止此 Run，旧步骤返回后只丢弃其结果。
+        if self._runs.get(run.run_id) is not run:
+            return None
+        # 保存新状态，step 次数加一，再把当前状态的快照和本步 Effect 交给 Dispatcher。
         run.behavior_state = result.next_state
         run.step_count += 1
-        return AgentTransition(replace(run), step=result)
+        return AgentTransition(_snapshot(run), step=result)
 
     def _failed_request(
         self,
@@ -182,10 +235,19 @@ class AgentRuntime:
 
     def _remove(self, run_id: str) -> None:
         """从 Runtime 中移除对应的 AgentRun, 并清理所有等待关联。"""
-        self._runs.pop(run_id, None)
-        stale = [key for key, value in self._operation_to_run.items() if value == run_id]
-        for operation_id in stale:
-            self._operation_to_run.pop(operation_id, None)
+        # 移除 Run 和它的锁记录，并删除剩余操作到这个 Run 的映射。
+        # 已发出的外部操作仍会继续执行，但它们返回结果后，resume 会直接忽略。
+        run = self._runs.pop(run_id, None)
+        self._run_locks.pop(run_id, None)
+        if run is not None:
+            for operation_id in run.pending_operations:
+                self._operation_to_run.pop(operation_id, None)
+
+
+def _snapshot(run: AgentRun) -> AgentRun:
+    """固定当前等待集合，交付计划和终态读取独立的运行快照。"""
+
+    return replace(run, pending_operations=dict(run.pending_operations))
 
 
 def _require_pure_data(value: object) -> None:

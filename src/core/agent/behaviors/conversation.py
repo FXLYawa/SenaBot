@@ -22,6 +22,9 @@ from core.memory import (
 from core.model import ModelMessage, render_prompt
 
 
+_CONTEXT_MEMORIES = "context_memories"
+
+
 class ConversationBehavior:
     """对话 Behavior"""
 
@@ -36,14 +39,21 @@ class ConversationBehavior:
         """对话行为的入口, 每轮交互都是一个 step"""
         current = _require_state(state)
         if observation.kind is AgentObservationType.STARTED:
-            return AgentStepResult(current, (MemoryQueryEffect(query=current.user_text),))
-        # 对记忆查询结果的处理
-        if isinstance(observation.payload, MemoryQueryResult):
-            return await self._reply_with_context(
-                current.with_memories(observation.payload.memories)
+            return AgentStepResult(
+                current,
+                (MemoryQueryEffect(query=current.user_text, request_key=_CONTEXT_MEMORIES),),
             )
-        if isinstance(observation.payload, MemoryQueryFailedEventData):
-            return await self._reply_with_context(current.with_memories([]))
+        # 按行为请求标识接收本轮上下文记忆，成功与失败都结束这一次查询。
+        if (
+            observation.kind is AgentObservationType.EXTERNAL_RESULT
+            and observation.request_key == _CONTEXT_MEMORIES
+        ):
+            if isinstance(observation.payload, MemoryQueryResult):
+                return await self._reply_with_context(
+                    current.with_memories(observation.payload.memories)
+                )
+            if isinstance(observation.payload, MemoryQueryFailedEventData):
+                return await self._reply_with_context(current.with_memories([]))
         return AgentStepResult(
             next_state=current,
             effects=(
