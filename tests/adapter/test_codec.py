@@ -8,6 +8,9 @@ import unittest
 from core.body import (
     AdapterInboundMessage,
     AdapterOutboundMessage,
+    OutputReplyInfo,
+)
+from core.common import (
     Content,
     ContentSegment,
     ContentType,
@@ -28,9 +31,9 @@ def make_outbound(
     return AdapterOutboundMessage(
         adapter_type="desktop",
         platform="desktop",
-        scene=SceneInfo(SceneType.DESKTOP, SCENE_ID),
+        scene=SceneInfo(platform="desktop", scene_type=SceneType.DESKTOP, scene_id=SCENE_ID),
         content=content or Content.from_text("hi"),
-        reply_to_message_id=reply_to,
+        reply_to=OutputReplyInfo(platform_event_id=reply_to) if reply_to is not None else None,
         metadata=metadata or {},
     )
 

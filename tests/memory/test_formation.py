@@ -3,10 +3,9 @@ from datetime import datetime, timezone
 import pytest
 
 from core.memory.change_plan import AddMemoryItem, MemoryChangePlan
-from core.memory.contracts import (
-    MemoryWriteMessage,
-    MemoryWriteRequest,
-    MemoryWriteSummary,
+from core.common import Content, SceneInfo, SceneType, Summary
+from core.context import (
+    ContextActorRef, ContextActorType, ContextEntryRecord, ContextReadView, SessionRecord,
 )
 from core.memory.executor import (
     MemoryChangeExecutionInput,
@@ -16,6 +15,7 @@ from core.memory.models import (
     Fact,
     MemoryCandidate,
     MemoryFormationInput,
+    MemoryExtractionContext,
     MemoryItem,
     MemoryMaterializationInput,
     MemoryRecallContext,
@@ -109,6 +109,7 @@ class RecordingMaterializer:
         self.calls = calls
         self.payload = payload
         self.input_data: MemoryMaterializationInput | None = None
+        self.inputs: list[MemoryMaterializationInput] = []
 
     async def materialize(
         self,
@@ -116,6 +117,7 @@ class RecordingMaterializer:
     ) -> Fact:
         self.calls.append("materialize")
         self.input_data = input_data
+        self.inputs.append(input_data)
         return self.payload
 
 
@@ -161,9 +163,9 @@ class RecordingExtractor:
     ) -> None:
         self.calls = calls
         self.candidates = candidates
-        self.context = None
+        self.context: MemoryExtractionContext | None = None
 
-    async def extract(self, context):
+    async def extract(self, context: MemoryExtractionContext) -> list[MemoryCandidate]:
         self.calls.append("extract")
         self.context = context
         return self.candidates
@@ -314,7 +316,7 @@ async def test_formation_supports_no_related_items():
 
 
 @pytest.mark.asyncio
-async def test_write_runs_extraction_then_forms_each_candidate():
+async def test_extract_and_store_forms_each_candidate_and_aggregates_results():
     calls: list[str] = []
     first_candidate = MemoryCandidate(
         candidate_id="candidate-001",
@@ -368,39 +370,34 @@ async def test_write_runs_extraction_then_forms_each_candidate():
         executor=executor,
     )
 
-    result = await service.write(
-        MemoryWriteRequest(
-            operation_id="operation-001",
-            memory_space_id="space-001",
-            user_id="user-001",
-            session_id="session-001",
-            group_id="group-001",
-            messages=(
-                MemoryWriteMessage("message-001", "user", "用户喜欢咖啡"),
-                MemoryWriteMessage("message-002", "assistant", "我记住了"),
-            ),
-            recent_messages=(
-                MemoryWriteMessage("message-000", "user", "之前的消息"),
-            ),
-            summaries=(
-                MemoryWriteSummary(
-                    summary_id="summary-002",
-                    level=2,
-                    first_sequence=1,
-                    last_sequence=16,
-                    text="更早的历史摘要",
-                ),
-                MemoryWriteSummary(
-                    summary_id="summary-001",
-                    level=1,
-                    first_sequence=17,
-                    last_sequence=24,
-                    text="较近的历史摘要",
-                ),
-            ),
-            source_event_id="event-001",
-            recorded_at=RECORDED_AT,
+    def entry(entry_id, sequence, text, actor_type):
+        return ContextEntryRecord(
+            entry_id, "session-001", sequence,
+            "user_message" if actor_type == ContextActorType.USER else "sena_message",
+            ContextActorRef(actor_type, "user-001" if actor_type == ContextActorType.USER else "sena"),
+            Content.from_text(text), f"event-{sequence}", RECORDED_AT,
         )
+
+    view = ContextReadView(
+        session=SessionRecord(
+            "session-001", RECORDED_AT, RECORDED_AT,
+            scene=SceneInfo(platform="discord", scene_type=SceneType.GROUP, scene_id="group-001"),
+        ),
+        after_sequence=25, through_sequence=27,
+        entries=(
+            entry("message-001", 26, "用户喜欢咖啡", ContextActorType.USER),
+            entry("message-002", 27, "用户讨厌熬夜", ContextActorType.USER),
+        ),
+        preceding_entries=(entry("message-000", 25, "之前的消息", ContextActorType.SENA),),
+        summaries=(
+            Summary("summary-002", "session-001", 2, 1, 16, "更早的历史摘要",
+                    RECORDED_AT, ("summary-child",)),
+            Summary("summary-001", "session-001", 1, 17, 24, "较近的历史摘要", RECORDED_AT),
+        ),
+    )
+    result = await service.extract_and_store(
+        operation_id="operation-001", memory_space_id="space-001",
+        user_id="user-001", context=view,
     )
 
     assert calls == [
@@ -432,6 +429,22 @@ async def test_write_runs_extraction_then_forms_each_candidate():
         "[level=1 range=17-24]\n"
         "较近的历史摘要"
     )
+    assert extractor.context.provenance == (
+        Provenance("context_entry", "message-001"), Provenance("context_entry", "message-002"),
+        Provenance("event", "event-26"), Provenance("event", "event-27"),
+    )
+    assert [item.candidate.content for item in materializer.inputs] == ["用户喜欢咖啡", "用户讨厌熬夜"]
+    assert [item.candidate.provenance for item in materializer.inputs] == [
+        (Provenance("context_entry", "message-001"), Provenance("event", "event-26")),
+        (Provenance("context_entry", "message-002"), Provenance("event", "event-27")),
+    ]
+    assert materializer.inputs[0].recorded_at == materializer.inputs[1].recorded_at
+    assert all(item.scopes == frozenset({
+        USER_SCOPE, MemoryScopeRef(MemoryScopeKind.SESSION, "session-001"),
+        MemoryScopeRef(MemoryScopeKind.GROUP, "group-001"),
+    }) for item in executor.inputs)
+    assert result.session_id == "session-001"
+    assert result.processed_through_sequence == 27
     assert len(executor.inputs) == 2
     assert [item.memory_space_id for item in executor.inputs] == [
         "space-001",
@@ -445,6 +458,39 @@ async def test_write_runs_extraction_then_forms_each_candidate():
     assert result.memory_space_id == "space-001"
     assert result.added_item_ids == ("memory-001", "memory-002")
     assert result.updated_item_ids == ()
+
+
+@pytest.mark.asyncio
+async def test_failed_candidate_stops_batch_without_returning_completed_result():
+    calls: list[str] = []
+    candidate = create_candidate("用户喜欢跑步")
+    extractor = RecordingExtractor(calls, [candidate, candidate])
+    materializer = RecordingMaterializer(calls, create_fact("用户喜欢跑步"))
+    reviewer = RecordingReviewer(calls, MemoryChangePlan(operations=(AddMemoryItem(create_fact("用户喜欢跑步")),)))
+
+    class FailingExecutor:
+        async def execute(self, input_data: MemoryChangeExecutionInput) -> MemoryChangeExecutionResult:
+            calls.append("execute")
+            raise RuntimeError("repository unavailable")
+
+    service = MemoryService(
+        extractor=extractor, embedder=RecordingEmbedder(calls),
+        memory_spaces=RecordingMemorySpaceRouter(calls, RecordingRetriever(calls, [])),
+        reranker=None, materializer=materializer, reviewer=reviewer, executor=FailingExecutor(),
+    )
+    session = SessionRecord("session-001", RECORDED_AT, RECORDED_AT)
+    entry = ContextEntryRecord(
+        "message-001", session.session_id, 1, "user_message",
+        ContextActorRef(ContextActorType.USER, "user-001"),
+        Content.from_text("我喜欢跑步"), "event-001", RECORDED_AT,
+    )
+    with pytest.raises(RuntimeError, match="repository unavailable"):
+        await service.extract_and_store(
+            operation_id="operation-001", memory_space_id="space-001",
+            user_id="user-001", context=ContextReadView(session, 0, 1, (entry,)),
+        )
+    assert calls == ["extract", "embed", "for_space", "retrieve", "materialize", "review", "execute"]
+    assert len(materializer.inputs) == 1
 
 
 @pytest.mark.parametrize(

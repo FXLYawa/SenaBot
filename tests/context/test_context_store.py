@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from core.context.common import Content
+from core.common import Content
 from core.context.contracts import (
     ContextActorRef,
     ContextActorType,

@@ -33,11 +33,6 @@ class StubModelProvider:
         return ModelResponse(text="unused", model="stub")
 
 
-class StubMemoryLLM:
-    async def generate(self, prompt: str) -> str:
-        return "{}"
-
-
 class StubEmbeddingProvider:
     async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
         return EmbeddingResponse((1.0,), "stub")

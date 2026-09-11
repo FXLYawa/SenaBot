@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 
 import pytest
 
+from core.model import ModelRequest, ModelResponse, ModelResponseError
+
 from core.memory.materialization import LLMMemoryMaterializer
 from core.memory.models import (
     Entity,
@@ -53,13 +55,17 @@ class FakeMemoryMaterializer:
 
 
 class FakeLLM:
-    def __init__(self, response: str) -> None:
-        self.response = response
-        self.prompt: str | None = None
+    def __init__(self, response: str, *, finish_reason: str = "stop") -> None:
+        self.response = ModelResponse(text=response, model="test-model", finish_reason=finish_reason)
+        self.requests: list[ModelRequest] = []
 
-    async def generate(self, prompt: str) -> str:
-        self.prompt = prompt
+    async def generate(self, request: ModelRequest) -> ModelResponse:
+        assert isinstance(request, ModelRequest)
+        self.requests.append(request)
         return self.response
+
+    async def close(self) -> None:
+        pass
 
 
 def create_fact() -> Fact:
@@ -309,18 +315,21 @@ async def test_materialization_prompt_limits_related_memory_to_context():
         materialization_input(related_items=(related_item,))
     )
 
-    assert llm.prompt is not None
-    assert "候选记忆是本次要成形的唯一新信息来源" in llm.prompt
-    assert "不得把旧记忆中本次候选未表达的信息" in llm.prompt
-    assert "不得在本阶段决定新增、更新、删除或替代记忆" in llm.prompt
-    assert "item_id: item-001" in llm.prompt
-    assert "domain: fact" in llm.prompt
-    assert "本次候选记忆：\n用户最近开始玩 FF14" in llm.prompt
+    assert len(llm.requests) == 1
+    assert len(llm.requests[0].messages) == 1
+    assert llm.requests[0].messages[0].role == "user"
+    prompt = llm.requests[0].messages[0].content
+    assert "候选记忆是本次要成形的唯一新信息来源" in prompt
+    assert "不得把旧记忆中本次候选未表达的信息" in prompt
+    assert "不得在本阶段决定新增、更新、删除或替代记忆" in prompt
+    assert "item_id: item-001" in prompt
+    assert "domain: fact" in prompt
+    assert "本次候选记忆：\n用户最近开始玩 FF14" in prompt
 
 
 @pytest.mark.asyncio
 async def test_llm_materializer_rejects_invalid_json():
-    with pytest.raises(json.JSONDecodeError):
+    with pytest.raises(ModelResponseError):
         await LLMMemoryMaterializer(FakeLLM("not-json")).materialize(
             materialization_input()
         )
@@ -356,3 +365,19 @@ async def test_llm_materializer_rejects_invalid_datetime():
         await LLMMemoryMaterializer(FakeLLM(response)).materialize(
             materialization_input()
         )
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finish_reason", ["length", "content_filter", "unknown", ""])
+async def test_incomplete_model_response_is_rejected(finish_reason):
+    llm = FakeLLM('{"domain":"fact","payload":{"content":"用户喜欢跑步"}}', finish_reason=finish_reason)
+    with pytest.raises(ModelResponseError, match="incomplete or empty"):
+        await LLMMemoryMaterializer(llm).materialize(materialization_input())
+
+
+@pytest.mark.asyncio
+async def test_complete_fenced_model_response_is_accepted():
+    llm = FakeLLM('```json\n{"domain":"fact","payload":{"content":"用户喜欢跑步"}}\n```')
+    result = await LLMMemoryMaterializer(llm).materialize(materialization_input())
+    assert isinstance(result, Fact)
+    assert result.content == "用户喜欢跑步"
+    assert result.provenance == PROVENANCE
