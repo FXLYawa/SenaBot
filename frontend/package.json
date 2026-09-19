@@ -9,8 +9,9 @@
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "electron:dev": "concurrently -k -s first \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
-    "electron:start": "npm run build && electron ."
+    "electron:dev": "concurrently -k -s first \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron . --dev\"",
+    "electron:start": "npm run build && electron .",
+    "test:electron": "node --test electron/main.node-test.cjs"
   },
   "dependencies": {
     "react": "^19.1.1",

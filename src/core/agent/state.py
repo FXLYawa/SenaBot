@@ -4,17 +4,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from core.context import ContextPreparedEventData
-from core.memory.contracts import Memory
+from core.common import SceneInfo, SourceInfo, Summary
+from core.context import ContextEntryRecord
+from core.memory import MemoryItem
 
 
 @dataclass(frozen=True, slots=True)
 class ConversationState:
     """ConversationBehavior 使用的对话数据"""
 
-    prepared: ContextPreparedEventData  # 当前对话上下文快照
     user_text: str  # 本轮触发条目的归一化文本
-    memories: tuple[Memory, ...] = ()  # 本轮相关记忆
+    entries: tuple[ContextEntryRecord, ...]
+    summaries: tuple[Summary, ...]
+    source: SourceInfo  # 供行为理解发言者身份。
+    scene: SceneInfo  # 供行为理解交互场景。
+    reply_to_message_id: str | None = None
+    memories: tuple[MemoryItem, ...] = ()  # 本轮相关记忆
 
-    def with_memories(self, memories: list[Memory]) -> ConversationState:
+    def with_memories(self, memories: list[MemoryItem]) -> ConversationState:
         return replace(self, memories=tuple(memories))

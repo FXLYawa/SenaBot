@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 from adapter import BaseAdapter
 from adapter.desktop import DesktopAdapter, DesktopCodec, WebSocketConnector
-from core.application.app import SenaBotApp
+from application.app import SenaBotApp
 from core.agent import PersonaConfig, create_agent_module
 from core.body import (
     AdapterInboundMessage,

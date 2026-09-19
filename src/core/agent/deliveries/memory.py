@@ -2,39 +2,53 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from core.agent.contracts import MemoryQueryEffect
-from core.common import SceneInfo, SceneType
-from core.event import EventFlow
+from core.agent.deliveries.base import PreparedDelivery
+from core.common import SceneInfo, SceneType, SourceInfo, new_id
 from core.memory import MemoryQueryRequest
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryQueryBinding:
+    """本次运行查询记忆时使用的请求者身份、会话和场景范围。"""
+
+    requester: SourceInfo
+    session_id: str
+    scene: SceneInfo
 
 
 class MemoryDelivery:
     """将 Agent 的记忆查询意图交给 Memory，不负责触发原始记录提取。"""
 
-    @staticmethod
-    def pending_operation_id(effect: MemoryQueryEffect) -> str:
-        _request(effect)
-        return effect.operation_id
+    binding_type = MemoryQueryBinding
 
-    @staticmethod
-    def emit(
-        flow: EventFlow,
+    def __init__(self, memory_space_id: str) -> None:
+        self._memory_space_id = memory_space_id
+
+    def prepare(
+        self,
         effect: MemoryQueryEffect,
-    ) -> None:
-        flow.emit("memory.query.requested", _request(effect))
+        binding: MemoryQueryBinding,
+    ) -> PreparedDelivery:
+        """按查询绑定构造检索范围，使用同一查询 ID 关联请求与等待。"""
 
-
-def _request(effect: MemoryQueryEffect) -> MemoryQueryRequest:
-    """把 Agent 的 Memory Effect 转换为 Memory 公开请求。"""
-
-    return MemoryQueryRequest(
-        query_id=effect.operation_id,
-        memory_space_id=effect.persona_id,
-        group_id=_group_id(effect.scene),
-        session_id=effect.session_id,
-        user_id=effect.requester.user_id,
-        query_text=effect.query,
-    )
+        if not binding.session_id:
+            raise ValueError("memory query binding requires a session")
+        operation_id = new_id("op_memory_query")
+        request = MemoryQueryRequest(
+            query_id=operation_id,
+            memory_space_id=self._memory_space_id,
+            group_id=_group_id(binding.scene),
+            session_id=binding.session_id,
+            user_id=binding.requester.user_id,
+            query_text=effect.query,
+        )
+        return PreparedDelivery(
+            events=(("memory.query.requested", request),),
+            pending_operation_id=operation_id,
+        )
 
 
 def _group_id(scene: SceneInfo) -> str:
