@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from core.application.bootstrap import SenaBotConfig, SenaBotDependencies, create_senabot_app
+from application import SenaBotConfig, SenaBotDependencies, create_senabot_app
 from core.body import AdapterInboundMessage, BodyOutputItemResult, OperationStatus
 from core.common import Content, OutputRoute, SceneInfo, SceneType
 from core.context.identity import conversation_session_id

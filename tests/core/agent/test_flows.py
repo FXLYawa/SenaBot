@@ -16,6 +16,8 @@ from core.agent.contracts import (
     MemoryQueryEffect,
     ReplyEffect,
 )
+from core.agent.deliveries.memory import MemoryQueryBinding
+from core.agent.deliveries.reply import ReplyBinding
 from core.agent.interaction import InteractionPolicy
 from core.agent.interaction_flow import InteractionFlow
 from core.agent.run_flow import RunFlow
@@ -114,6 +116,18 @@ def _prepared(
     )
 
 
+def _state(prepared: ContextPreparedEventData | None = None) -> ConversationState:
+    prepared = prepared or _prepared()
+    return ConversationState(
+        user_text="你好",
+        entries=prepared.entries,
+        summaries=prepared.summaries,
+        source=prepared.source,
+        scene=prepared.scene,
+        reply_to_message_id=prepared.reply_to_message_id,
+    )
+
+
 class InteractionTests(unittest.IsolatedAsyncioTestCase):
     def test_policy_handles_bot_direct_and_group_inputs(self) -> None:
         policy = InteractionPolicy()
@@ -145,14 +159,30 @@ class InteractionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.session_id, "session_1")
         self.assertEqual(request.behavior_type, "conversation")
         self.assertEqual(request.behavior_state.user_text, "你好")
-        self.assertEqual(request.behavior_state.prepared, prepared)
+        self.assertEqual(request.behavior_state, _state(prepared))
+        self.assertEqual(
+            request.delivery_bindings,
+            (
+                ReplyBinding(
+                    route=prepared.output_route,
+                    scene=prepared.scene,
+                    context_session_id=prepared.session_id,
+                    source_event_id=prepared.trigger_event_id,
+                ),
+                MemoryQueryBinding(
+                    requester=prepared.source,
+                    session_id=prepared.session_id,
+                    scene=prepared.scene,
+                ),
+            ),
+        )
 
 
 class ConversationBehaviorTests(unittest.IsolatedAsyncioTestCase):
-    async def test_started_observation_requests_scoped_memory(self) -> None:
+    async def test_started_observation_requests_semantic_memory_query(self) -> None:
         responder = StubResponder()
         behavior = ConversationBehavior(responder)
-        state = ConversationState(prepared=_prepared(), user_text="你好")
+        state = _state()
 
         result = await behavior.step(
             state,
@@ -162,24 +192,13 @@ class ConversationBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.effects), 1)
         effect = result.effects[0]
         self.assertIsInstance(effect, MemoryQueryEffect)
-        self.assertEqual(effect.query, "你好")
-        self.assertEqual(effect.requester.user_id, "user_1")
-        self.assertEqual(effect.session_id, "session_1")
-        self.assertEqual(effect.scene, state.prepared.scene)
-        self.assertEqual(effect.scene.scene_id, "scene_1")
-        self.assertEqual(effect.scene.platform, "discord")
-        self.assertEqual(effect.scene.scene_type, SceneType.PRIVATE)
-        self.assertEqual(effect.scene.account_namespace, "sena_bot")
-        self.assertEqual(effect.scene.scene_name, "Alice 的聊天")
-        self.assertEqual(effect.requester, state.prepared.source)
-        self.assertTrue(effect.operation_id.startswith("op_memory_query_"))
+        self.assertEqual(effect, MemoryQueryEffect(query="你好"))
         self.assertEqual(result.next_state, state)
-        self.assertEqual(effect.persona_id, "sena")
 
-    async def test_empty_memory_result_continues_to_routed_reply(self) -> None:
+    async def test_empty_memory_result_continues_to_semantic_reply(self) -> None:
         responder = StubResponder()
         behavior = ConversationBehavior(responder)
-        state = ConversationState(prepared=_prepared(), user_text="你好")
+        state = _state()
         memory_result = MemoryQueryResult(
             query_id="query_1",
             memory_space_id="sena",
@@ -198,21 +217,18 @@ class ConversationBehaviorTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.next_state.memories, ())
-        self.assertEqual(result.next_state.prepared, state.prepared)
+        self.assertEqual(result.next_state.entries, state.entries)
+        self.assertEqual(result.next_state.summaries, state.summaries)
         self.assertEqual(responder.messages, (ModelMessage("user", "你好"),))
         self.assertEqual(len(result.effects), 2)
         self.assertIsInstance(result.effects[0], ReplyEffect)
         self.assertEqual(result.effects[0].text, "你好")
-        self.assertEqual(result.effects[0].session_id, "session_1")
-        self.assertEqual(result.effects[0].output_route, state.prepared.output_route)
-        self.assertEqual(result.effects[0].scene, state.prepared.scene)
-        self.assertEqual(result.effects[0].trigger_event_id, "event_1")
         self.assertEqual(result.effects[0].reply_to_message_id, "message_1")
         self.assertIsInstance(result.effects[1], FinishEffect)
 
     async def test_memory_result_preserves_items_and_supplies_model_context(self) -> None:
         responder = StubResponder()
-        state = ConversationState(prepared=_prepared(), user_text="你好")
+        state = _state()
         memory = MemoryItem(
             item_id="alice_coffee_preference", memory_space_id="sena",
             scopes=frozenset({MemoryScopeRef(MemoryScopeKind.USER, "user_1")}),
@@ -235,7 +251,8 @@ class ConversationBehaviorTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.next_state.memories, (memory,))
-        self.assertEqual(result.next_state.prepared, state.prepared)
+        self.assertEqual(result.next_state.entries, state.entries)
+        self.assertEqual(result.next_state.scene, state.scene)
         self.assertEqual(len(responder.messages), 2)
         self.assertEqual(responder.messages[0].role, "system")
         self.assertIn("Alice 喜欢咖啡", responder.messages[0].content)
@@ -247,7 +264,7 @@ class ConversationBehaviorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_memory_query_failure_still_generates_reply(self) -> None:
         responder = StubResponder()
-        state = ConversationState(prepared=_prepared(), user_text="你好")
+        state = _state()
         failure = MemoryQueryFailedEventData(
             query_id="query_1", memory_space_id="sena",
             error=MemoryErrorInfo(code="query_failed", message="查询失败"),
@@ -265,9 +282,7 @@ class ConversationBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(responder.messages, (ModelMessage("user", "你好"),))
         self.assertEqual(result.effects, (
             ReplyEffect(
-                text="你好", session_id="session_1", trigger_event_id="event_1",
-                output_route=state.prepared.output_route, scene=state.prepared.scene,
-                reply_to_message_id="message_1",
+                text="你好", reply_to_message_id="message_1",
             ),
             FinishEffect(),
         ))
