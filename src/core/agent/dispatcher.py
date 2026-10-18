@@ -10,11 +10,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.agent.contracts import (
+    AgentRun,
     AgentRunCompletedEventData,
     AgentRunFailedEventData,
     AgentStepResult,
     FailEffect,
     FinishEffect,
+    PendingOperation,
 )
 from core.agent.deliveries import EffectDelivery, PreparedDelivery
 from core.agent.runtime import AgentRuntime, AgentTransition
@@ -26,7 +28,8 @@ class _DispatchPlan:
     """一个 Step 通过校验后得到的完整执行计划。"""
 
     events: tuple[tuple[str, object], ...] # 按 Effect 及其内部声明顺序汇总的事件。
-    pending_operation_id: str | None # 需要等待结果时使用的关联 ID；不等待时为空
+    pending_operations: tuple[PendingOperation, ...]  # 本步骤新增的等待。
+    finish_requested: bool # 本步骤是否请求完成 Run。
 
 
 class AgentDispatcher:
@@ -59,7 +62,7 @@ class AgentDispatcher:
             return
 
         # 校验 Step 并生成执行计划
-        plan = self._plan_step(step, transition.run.delivery_bindings)
+        plan = self._plan_step(step, transition.run)
         # 如果校验失败, 直接终止 Run 并发布失败事件
         if isinstance(plan, FailEffect):
             self._fail(flow, transition.run.run_id, plan)
@@ -70,7 +73,7 @@ class AgentDispatcher:
     def _plan_step(
         self,
         step: AgentStepResult,
-        bindings: tuple[object, ...],
+        run: AgentRun,
     ) -> _DispatchPlan | FailEffect:
         """校验控制 Effect, 并把所有副作用解析成不产生事件的执行计划。"""
 
@@ -96,38 +99,29 @@ class AgentDispatcher:
         
         # 4. 匹配各 Delivery 所需的绑定并准备请求，整步通过校验后统一发布。
         events: list[tuple[str, object]] = []
-        pending_operation_ids: list[str] = []
+        pending_operations: list[PendingOperation] = []
         for effect in external_effects:
-            prepared = self._prepare_delivery(effect, bindings)
+            prepared = self._prepare_delivery(effect, run.delivery_bindings)
             if isinstance(prepared, FailEffect):
                 return prepared
             events.extend(prepared.events)
-            operation_id = prepared.pending_operation_id
-            if operation_id is not None:
-                pending_operation_ids.append(operation_id)
+            if prepared.pending_operation is not None:
+                pending_operations.append(prepared.pending_operation)
 
-        # 5. 校验等待关系, 确保最多只有一个需要等待的外部副作用 Effect
-        if len(pending_operation_ids) > 1:
-            return FailEffect(
-                "step_invalid",
-                "A step may wait for at most one external result.",
-            )
-        pending_operation_id = (
-            pending_operation_ids[0] if pending_operation_ids else None
-        )
-        # 等待外部结果和结束当前 Run 是互斥的步骤结果。
+        # 5. Finish 可以放弃旧等待；本步骤新增的请求则需要保留接收结果的 Run。
         finish_requested = bool(finishes)
-        if pending_operation_id is not None and finish_requested:
+        if pending_operations and finish_requested:
             return FailEffect(
                 "step_invalid",
                 "A waiting effect cannot be combined with FinishEffect.",
             )
-        if pending_operation_id is None and not finish_requested:
+        # 部分结果只更新状态时，已有等待足以让 Run 继续推进。
+        if not run.pending_operations and not pending_operations and not finish_requested:
             return FailEffect(
                 "step_stalled",
                 "Behavior neither waited for an operation nor finished the run.",
             )
-        return _DispatchPlan(tuple(events), pending_operation_id)
+        return _DispatchPlan(tuple(events), tuple(pending_operations), finish_requested)
 
     def _prepare_delivery(
         self, effect: object, bindings: tuple[object, ...],
@@ -163,14 +157,18 @@ class AgentDispatcher:
     ) -> None:
         """先登记可选等待，再按声明顺序发布计划中的所有副作用。"""
 
-        # 先登记可选等待
-        if plan.pending_operation_id is not None:
-            self._runtime.wait_for(run_id, plan.pending_operation_id,)
+        # 批量登记会在修改等待索引前检查所有冲突，失败时整步都不发布业务事件。
+        if plan.pending_operations:
+            try:
+                self._runtime.wait_for(run_id, plan.pending_operations)
+            except ValueError as error:
+                self._fail(flow, run_id, FailEffect("pending_operation_invalid", str(error)))
+                return
         # 请求与关联 ID 已在准备阶段固定，按 Effect 顺序发布对应事件。
         for event_type, payload in plan.events:
             flow.emit(event_type, payload)
-        # 通过计划校验且无需等待时，本步已明确请求结束 Run。
-        if plan.pending_operation_id is None:
+        # 完成由 Behavior 明确声明，同时释放旧等待的结果关联。
+        if plan.finish_requested:
             self._complete(flow, run_id)
 
     def _complete(self, flow: EventFlow, run_id: str) -> None:

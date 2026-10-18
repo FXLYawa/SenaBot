@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol, TypeAlias
 
@@ -27,6 +27,7 @@ class AgentObservation:
     kind: AgentObservationType  # 标识当前调用的原因
     payload: object | None = None # 外部调用的结果数据，Behavior 自行解析
     resolution_status: str = "completed" # 外部结果的状态（completed, failed, etc.）
+    request_key: str | None = None  # 外部结果对应的行为请求；用于让 Behavior 知道返回的结果对应自己发出的哪项请求
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +35,7 @@ class PendingOperation:
     """AgentRun 当前正在等待外部结果的操作"""
 
     operation_id: str  # 用于把外部结果重新关联到原 Run 
-    # 当前同一个 Run 同时只有一个PendingOperation，后续可能可以考虑添加并行的PendingOperation列表
+    request_key: str  # Behavior 用来识别请求用途的标识，在 Run 的未完成请求中唯一。
 
 
 @dataclass(slots=True)
@@ -45,7 +46,7 @@ class AgentRun:
     session_id: str | None  # 发起 Run 的会话关联，不限定 Behavior 的工作存储位置。
     behavior_type: str  # 指定 Behavior 的类型，Runtime 只负责路由到对应的 Behavior 实现。
     behavior_state: object # Behavior 的私有状态，Runtime 不解释负责解释
-    pending_operation: PendingOperation | None = None # 是否在等待外部行为，没有的话为 None
+    pending_operations: dict[str, PendingOperation] = field(default_factory=dict)  # 按外部操作 ID 索引。
     step_count: int = 0 # 记录 Behavior step 的次数
     delivery_bindings: tuple[object, ...] = ()  # 随 Run 保存的纯数据，由具体 Delivery 解释。
 
@@ -70,11 +71,12 @@ class MemoryQueryEffect:
     """在本次交互的身份和场景范围内查询记忆。"""
 
     query: str # 检索内容
+    request_key: str  # 结果回到 Behavior 时使用的请求标识。
 
 
 @dataclass(frozen=True, slots=True)
 class FinishEffect:
-    """Behavior 已完成语义工作。"""
+    """Behavior 已完成工作并放弃剩余结果；已发出的外部操作继续自行执行。"""
     # 无需字段，只需要表达这一结果即可
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.agent.contracts import MemoryQueryEffect
+from core.agent.contracts import MemoryQueryEffect, PendingOperation
 from core.agent.deliveries.base import PreparedDelivery
 from core.common import SceneInfo, SceneType, SourceInfo, new_id
 from core.memory import MemoryQueryRequest
@@ -47,7 +47,10 @@ class MemoryDelivery:
         )
         return PreparedDelivery(
             events=(("memory.query.requested", request),),
-            pending_operation_id=operation_id,
+            pending_operation=PendingOperation(
+                operation_id=operation_id,
+                request_key=effect.request_key,
+            ),
         )
 
 

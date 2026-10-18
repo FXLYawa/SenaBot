@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from core.agent.contracts import AgentObservation, AgentObservationType
 from core.agent.dispatcher import AgentDispatcher
-from core.agent.runtime import AgentRuntime, AgentTransition
+from core.agent.runtime import AgentRuntime
 from core.event import EventFlow
 from core.memory import (
     MemoryQueryFailedEventData,
@@ -28,7 +28,9 @@ class RunFlow:
         处理 agent.run.requested 事件
         """
 
-        await self._dispatch(flow, await self._runtime.start(flow.payload))
+        async with self._runtime.start(flow.payload) as transition:
+            if transition is not None:
+                self._dispatcher.dispatch(flow, transition)
 
     async def handle_memory_query_result(self, flow: EventFlow) -> None:
         """用 Memory 查询结果恢复等待中的 Run。
@@ -53,20 +55,14 @@ class RunFlow:
     ) -> None:
         """恢复等待中的 Run，并分发它的状态迁移。"""
         
-        transition = await self._runtime.resume(
+        # Runtime 的串行范围覆盖结果消费、Behavior 推进及新等待的登记和事件准备。
+        async with self._runtime.resume(
             operation_id,
             AgentObservation(
                 kind=AgentObservationType.EXTERNAL_RESULT,
                 payload=payload,
                 resolution_status=resolution_status,
             ),
-        )
-        if transition is not None:
-            await self._dispatch(flow, transition)
-
-    async def _dispatch(
-        self,
-        flow: EventFlow,
-        transition: AgentTransition,
-    ) -> None:
-        self._dispatcher.dispatch(flow, transition)
+        ) as transition:
+            if transition is not None:
+                self._dispatcher.dispatch(flow, transition)
