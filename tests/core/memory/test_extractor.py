@@ -1,12 +1,18 @@
 import json
+from datetime import UTC, datetime
 
 import pytest
+
+from core.model import ModelRequest, ModelResponse, ModelResponseError
+from core.common import Content, Summary
+from core.context import (
+    ContextActorRef, ContextActorType, ContextEntryRecord, ContextReadView, SessionRecord,
+)
 
 from core.memory.extractor import LLMMemoryExtractor
 from core.memory.models import (
     MemoryCandidate,
     MemoryExtractionContext,
-    MemoryExtractionInput,
     MemoryExtractionMessage,
     Provenance,
 )
@@ -30,13 +36,17 @@ def create_candidate(
 
 
 class FakeLLM:
-    def __init__(self, response: str) -> None:
-        self.response = response
-        self.prompt: str | None = None
+    def __init__(self, response: str, *, finish_reason: str = "stop") -> None:
+        self.response = ModelResponse(text=response, model="test-model", finish_reason=finish_reason)
+        self.requests: list[ModelRequest] = []
 
-    async def generate(self, prompt: str) -> str:
-        self.prompt = prompt
+    async def generate(self, request: ModelRequest) -> ModelResponse:
+        assert isinstance(request, ModelRequest)
+        self.requests.append(request)
         return self.response
+
+    async def close(self) -> None:
+        pass
 
 
 class RecordingExtractor:
@@ -48,7 +58,7 @@ class RecordingExtractor:
         context: MemoryExtractionContext,
     ) -> list[MemoryCandidate]:
         self.context = context
-        return [create_candidate()]
+        return []
 
 
 def extraction_context() -> MemoryExtractionContext:
@@ -125,36 +135,21 @@ async def test_extract_returns_empty_candidates() -> None:
 
 
 @pytest.mark.asyncio
-async def test_extract_filters_invalid_candidates() -> None:
-    response = json.dumps(
-        {
-            "memories": [
-                None,
-                {"missing": "content"},
-                {"content": 42},
-                {"content": "   "},
-                {"content": "缺少来源"},
-                {"content": "空来源", "source_message_ids": []},
-                {
-                    "content": "  有效记忆  ",
-                    "source_message_ids": ["message-001"],
-                },
-            ]
-        },
-        ensure_ascii=False,
-    )
-
-    candidates = await LLMMemoryExtractor(
-        FakeLLM(response),
-        candidate_id_factory=lambda: "candidate-001",
-    ).extract(extraction_context())
-
-    assert [candidate.content for candidate in candidates] == ["有效记忆"]
+@pytest.mark.parametrize("candidate", [
+    None, {"missing": "content"}, {"content": 42}, {"content": "   "},
+    {"content": "缺少来源"}, {"content": "空来源", "source_message_ids": []},
+])
+async def test_extract_rejects_invalid_candidate_instead_of_filtering(candidate):
+    response = json.dumps({"memories": [
+        {"content": "有效记忆", "source_message_ids": ["message-001"]}, candidate,
+    ]})
+    with pytest.raises(ValueError, match="candidate"):
+        await LLMMemoryExtractor(FakeLLM(response)).extract(extraction_context())
 
 
 @pytest.mark.asyncio
 async def test_extract_rejects_invalid_json() -> None:
-    with pytest.raises(json.JSONDecodeError):
+    with pytest.raises(ModelResponseError):
         await LLMMemoryExtractor(FakeLLM("not-json")).extract(extraction_context())
 
 
@@ -196,61 +191,79 @@ async def test_prompt_limits_context_and_assistant_to_supporting_information() -
 
     await LLMMemoryExtractor(llm).extract(extraction_context())
 
-    assert llm.prompt is not None
-    assert "历史摘要和最近消息只用于帮助理解当前消息" in llm.prompt
-    assert "不能直接作为本次新记忆的来源" in llm.prompt
+    assert len(llm.requests) == 1
+    assert len(llm.requests[0].messages) == 1
+    assert llm.requests[0].messages[0].role == "user"
+    prompt = llm.requests[0].messages[0].content
+    assert "历史摘要和最近消息只用于帮助理解当前消息" in prompt
+    assert "不能直接作为本次新记忆的来源" in prompt
     assert (
         "不得把 Assistant 的推测、建议或未经用户确认的信息"
-        "作为用户事实提取" in llm.prompt
+        "作为用户事实提取" in prompt
     )
-    assert "历史摘要：\n用户喜欢跑步" in llm.prompt
-    assert "最近消息：\n[history-001] user: 我上周去了杭州" in llm.prompt
-    assert "当前新消息：\n[message-001] user: 今天有点累" in llm.prompt
-    assert "[message-002] assistant: 你可能最近工作太多了" in llm.prompt
-    assert '"source_message_ids": ["message-001"]' in llm.prompt
+    assert "历史摘要：\n用户喜欢跑步" in prompt
+    assert "最近消息：\n[history-001] user: 我上周去了杭州" in prompt
+    assert "当前新消息：\n[message-001] user: 今天有点累" in prompt
+    assert "[message-002] assistant: 你可能最近工作太多了" in prompt
+    assert '"source_message_ids": ["message-001"]' in prompt
 
 
 @pytest.mark.asyncio
-async def test_service_builds_context_and_delegates_to_extractor() -> None:
+@pytest.mark.parametrize("finish_reason", ["length", "content_filter", "unknown", ""])
+async def test_incomplete_model_response_is_rejected(finish_reason):
+    llm = FakeLLM('{"memories": []}', finish_reason=finish_reason)
+    with pytest.raises(ModelResponseError, match="incomplete or empty"):
+        await LLMMemoryExtractor(llm).extract(extraction_context())
+
+
+@pytest.mark.asyncio
+async def test_complete_fenced_model_response_is_accepted():
+    llm = FakeLLM('```json\n{"memories": []}\n```')
+    result = await LLMMemoryExtractor(llm).extract(extraction_context())
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_service_builds_context_from_read_view_and_handles_empty_candidates():
+    now = datetime(2026, 9, 11, tzinfo=UTC)
+    session = SessionRecord("session-001", now, now)
+    history = ContextEntryRecord(
+        "history-001", session.session_id, 2, "sena_message",
+        ContextActorRef(ContextActorType.SENA, "sena", "Sena"),
+        Content.from_text("你之前提到过运动"), "event-history", now,
+    )
+    entry = ContextEntryRecord(
+        "message-001", session.session_id, 3, "user_message",
+        ContextActorRef(ContextActorType.USER, "user-001", "Alice"),
+        Content.from_text("我喜欢跑步"), "event-001", now,
+    )
+    view = ContextReadView(
+        session=session, after_sequence=2, through_sequence=3, entries=(entry,),
+        preceding_entries=(history,),
+        summaries=(Summary("summary-001", session.session_id, 1, 1, 1,
+                           "用户在制定运动计划", now),),
+    )
     extractor = RecordingExtractor()
-    unused_dependency = object()
     service = MemoryService(
-        extractor=extractor,
-        embedder=unused_dependency,
-        memory_spaces=unused_dependency,
-        reranker=unused_dependency,
-        materializer=unused_dependency,
-        reviewer=unused_dependency,
-        executor=unused_dependency,
+        extractor=extractor, embedder=object(), memory_spaces=object(), reranker=None,
+        materializer=object(), reviewer=object(), executor=object(),
     )
-    input_data = MemoryExtractionInput(
-        messages=[
-            MemoryExtractionMessage(
-                "message-001",
-                "user",
-                "我喜欢跑步",
-            )
-        ],
-        provenance=PROVENANCE,
+    result = await service.extract_and_store(
+        operation_id="extraction-001", memory_space_id="sena",
+        user_id="user-001", context=view,
     )
-    recent_messages = [
-        MemoryExtractionMessage(
-            "history-001",
-            "assistant",
-            "你之前提到过运动",
-        )
-    ]
-
-    candidates = await service.extract(
-        input_data,
-        summary="用户在制定运动计划",
-        recent_messages=recent_messages,
-    )
-
-    assert candidates == [create_candidate()]
     assert extractor.context == MemoryExtractionContext(
-        new_messages=input_data.messages,
-        summary="用户在制定运动计划",
-        recent_messages=recent_messages,
-        provenance=PROVENANCE,
+        new_messages=[MemoryExtractionMessage(
+            "message-001", "user", "我喜欢跑步", "user-001", "Alice", now,
+        )],
+        recent_messages=[MemoryExtractionMessage(
+            "history-001", "assistant", "你之前提到过运动", "sena", "Sena", now,
+        )],
+        summary="[level=1 range=1-1]\n用户在制定运动计划",
+        provenance=(Provenance("context_entry", "message-001"), Provenance("event", "event-001")),
     )
+    assert result.operation_id == "extraction-001"
+    assert result.memory_space_id == "sena"
+    assert result.session_id == session.session_id
+    assert result.processed_through_sequence == 3
+    assert result.added_item_ids == result.updated_item_ids == ()

@@ -16,11 +16,10 @@ from core.body import (
     BodyOutputRequestData,
     BodyOutputResultEventData,
     BodyRuntime,
-    Content,
     OperationStatus,
-    SceneType,
-    UserRole,
+    OutputReplyInfo,
 )
+from core.common import Content, OutputRoute, SceneType, UserRole
 from core.event import EventBus, EventClient, EventFlow, ModuleEventAPI
 
 from adapter.desktop import DesktopAdapter, DesktopCodec
@@ -33,16 +32,17 @@ class FakeConnector:
         self.on_message: Callable[[str], Awaitable[None]] | None = None
         self.sent: list[str] = []
         self.sent_event = asyncio.Event()
+        self.close_requested = asyncio.Event()
 
     async def run(self) -> None:
-        await asyncio.Event().wait()
+        await self.close_requested.wait()
 
     async def send(self, raw: str) -> None:
         self.sent.append(raw)
         self.sent_event.set()
 
     async def close(self) -> None:
-        pass
+        self.close_requested.set()
 
 
 class DesktopRoundtripTests(unittest.IsolatedAsyncioTestCase):
@@ -112,6 +112,13 @@ class DesktopRoundtripTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(inbound.content.text_value(), "hello")
             self.assertEqual(inbound.scene.scene_type, SceneType.DESKTOP)
             self.assertEqual(inbound.scene.scene_id, "desktop")
+            self.assertEqual(inbound.scene.platform, "desktop")
+            self.assertEqual(inbound.scene.account_namespace, "default")
+            self.assertEqual(
+                inbound.output_route,
+                OutputRoute(adapter_type="desktop", platform="desktop", body_id="desktop"),
+            )
+            self.assertEqual(inbound.reply_target_id, "m1")
             self.assertEqual(inbound.source.user_id, "local-owner")
             self.assertEqual(inbound.source.display_name, "Owner")
             self.assertEqual(inbound.source.role, UserRole.OWNER)
@@ -120,7 +127,9 @@ class DesktopRoundtripTests(unittest.IsolatedAsyncioTestCase):
                 "body.output.requested",
                 BodyOutputRequestData(
                     output_id="o1",
-                    session_id=inbound.session_id,
+                    route=inbound.output_route,
+                    scene=inbound.scene,
+                    reply_to=OutputReplyInfo(platform_event_id=inbound.reply_target_id),
                     content=Content.from_text("pong"),
                     metadata={"internal": "must-not-leak"},
                 ),

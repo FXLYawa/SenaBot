@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 
 import pytest
 
+from core.model import ModelRequest, ModelResponse, ModelResponseError
+
 from core.memory.change_plan import (
     AddMemoryItem,
     EndFactValidity,
@@ -28,13 +30,17 @@ PROVENANCE = (Provenance("event", "event-001"),)
 
 
 class FakeLLM:
-    def __init__(self, response: str) -> None:
-        self.response = response
-        self.prompt: str | None = None
+    def __init__(self, response: str, *, finish_reason: str = "stop") -> None:
+        self.response = ModelResponse(text=response, model="test-model", finish_reason=finish_reason)
+        self.requests: list[ModelRequest] = []
 
-    async def generate(self, prompt: str) -> str:
-        self.prompt = prompt
+    async def generate(self, request: ModelRequest) -> ModelResponse:
+        assert isinstance(request, ModelRequest)
+        self.requests.append(request)
         return self.response
+
+    async def close(self) -> None:
+        pass
 
 
 def create_fact(
@@ -209,16 +215,19 @@ async def test_reviewer_prompt_contains_payload_and_related_items():
         review_input(payload, old_item)
     )
 
-    assert llm.prompt is not None
-    assert "不得改写 Payload" in llm.prompt
-    assert '"content": "用户现在不喜欢跑步"' in llm.prompt
-    assert '"item_id": "fact-001"' in llm.prompt
-    assert "Experience 只能 add 或 no_change" in llm.prompt
+    assert len(llm.requests) == 1
+    assert len(llm.requests[0].messages) == 1
+    assert llm.requests[0].messages[0].role == "user"
+    prompt = llm.requests[0].messages[0].content
+    assert "不得改写 Payload" in prompt
+    assert '"content": "用户现在不喜欢跑步"' in prompt
+    assert '"item_id": "fact-001"' in prompt
+    assert "Experience 只能 add 或 no_change" in prompt
 
 
 @pytest.mark.asyncio
 async def test_reviewer_rejects_invalid_json():
-    with pytest.raises(json.JSONDecodeError):
+    with pytest.raises(ModelResponseError):
         await LLMMemoryReviewer(FakeLLM("not-json")).review(
             review_input(create_fact())
         )
@@ -316,3 +325,17 @@ async def test_reviewer_rejects_attempt_to_override_payload(
         await LLMMemoryReviewer(FakeLLM(response)).review(
             review_input(create_fact())
         )
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finish_reason", ["length", "content_filter", "unknown", ""])
+async def test_incomplete_model_response_is_rejected(finish_reason):
+    llm = FakeLLM('{"operations":[{"type":"add"}]}', finish_reason=finish_reason)
+    with pytest.raises(ModelResponseError, match="incomplete or empty"):
+        await LLMMemoryReviewer(llm).review(review_input(create_fact()))
+
+
+@pytest.mark.asyncio
+async def test_complete_fenced_model_response_is_accepted():
+    llm = FakeLLM('```json\n{"operations":[{"type":"add"}]}\n```')
+    result = await LLMMemoryReviewer(llm).review(review_input(create_fact()))
+    assert result.operations == (AddMemoryItem(create_fact()),)

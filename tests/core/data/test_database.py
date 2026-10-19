@@ -12,6 +12,8 @@ from core.data.database import SQLiteDatabase
 
 
 NOW = "2026-09-05T00:00:00.000000Z"
+# SQLiteDatabase._migrate applies 001_initial.sql and 002_memory_extraction.sql.
+CURRENT_SCHEMA_VERSION = 2
 
 
 def add_session(db, session_id="session-1", scene_id="desktop"):
@@ -73,10 +75,27 @@ class DatabaseTests(unittest.TestCase):
             path = Path(directory) / "sena.db"
             with SQLiteDatabase(path) as database:
                 self.assertTrue(database.connection.execute("SELECT vec_version()").fetchone()[0])
+                self.assertEqual(database.connection.execute("PRAGMA user_version").fetchone()[0], CURRENT_SCHEMA_VERSION)
                 with database.transaction() as db:
                     add_session(db)
+                    db.execute(
+                        "INSERT INTO memory_extraction_progress "
+                        "(memory_space_id, session_id, processed_through_sequence) VALUES (?, ?, ?)",
+                        ("sena", "session-1", 7),
+                    )
+                schema = [tuple(row) for row in database.connection.execute(
+                    "SELECT type, name, sql FROM sqlite_master ORDER BY type, name"
+                )]
             with SQLiteDatabase(path) as database:
-                self.assertEqual(database.connection.execute("PRAGMA user_version").fetchone()[0], 1)
+                self.assertEqual(database.connection.execute("PRAGMA user_version").fetchone()[0], CURRENT_SCHEMA_VERSION)
+                self.assertEqual([tuple(row) for row in database.connection.execute(
+                    "SELECT type, name, sql FROM sqlite_master ORDER BY type, name"
+                )], schema)
+                self.assertTrue(database.connection.execute("SELECT vec_version()").fetchone()[0])
+                self.assertEqual(tuple(database.connection.execute(
+                    "SELECT memory_space_id, session_id, processed_through_sequence "
+                    "FROM memory_extraction_progress"
+                ).fetchone()), ("sena", "session-1", 7))
                 self.assertEqual(database.connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
                 self.assertEqual(database.connection.execute("SELECT count(*) FROM context_sessions").fetchone()[0], 1)
                 self.assertIsNone(database.connection.execute(
@@ -172,14 +191,40 @@ class DatabaseTests(unittest.TestCase):
             finally:
                 db.close()
 
-    def test_future_schema_rejected_and_invalid_dimension_rejected(self):
+    def test_invalid_dimension_rejected_without_creating_vector_table(self):
+        with SQLiteDatabase(":memory:") as database:
+            for dimension in (0, -1, True, 3.5, "3"):
+                with self.subTest(dimension=dimension), self.assertRaisesRegex(
+                    ValueError, "vector dimensions must be a positive integer"
+                ):
+                    database.initialize_vectors(dimension)
+                self.assertFalse(database.connection.in_transaction)
+                self.assertIsNone(database.connection.execute(
+                    "SELECT name FROM sqlite_master WHERE name='memory_vectors'"
+                ).fetchone())
+
+    def test_future_schema_rejected_and_connection_closed(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "sena.db"
+            future_version = CURRENT_SCHEMA_VERSION + 1
             with SQLiteDatabase(path) as database:
-                for dimension in (0, -1, True, 3.5, "3"):
-                    with self.subTest(dimension=dimension), self.assertRaises(ValueError):
-                        database.initialize_vectors(dimension)
                 with database.transaction() as db:
-                    db.execute("PRAGMA user_version = 2")
-            with self.assertRaises(ValueError):
-                SQLiteDatabase(path)
+                    db.execute(f"PRAGMA user_version = {future_version}")
+            connection = sqlite3.connect(path, isolation_level=None)
+            try:
+                with patch("core.data.database.sqlite3.connect", return_value=connection):
+                    with self.assertRaisesRegex(
+                        ValueError, f"^unsupported database schema version: {future_version}$"
+                    ):
+                        # Also close if construction unexpectedly succeeds.
+                        with SQLiteDatabase(path):
+                            pass
+                with self.assertRaises(sqlite3.ProgrammingError):
+                    connection.execute("SELECT 1")
+            finally:
+                connection.close()
+            connection = sqlite3.connect(path)
+            try:
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], future_version)
+            finally:
+                connection.close()

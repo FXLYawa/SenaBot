@@ -10,11 +10,9 @@ from core.body import (
     AdapterInboundMessage,
     AdapterOutboundMessage,
     BodyInputEventData,
-    Content,
     OperationStatus,
-    SceneInfo,
-    SceneType,
 )
+from core.common import Content, SceneInfo, SceneType
 
 from adapter.base import BaseAdapter
 from adapter.codec import CodecError
@@ -37,7 +35,7 @@ def make_outbound() -> AdapterOutboundMessage:
     return AdapterOutboundMessage(
         adapter_type="test",
         platform="test",
-        scene=SceneInfo(SceneType.DESKTOP, "desktop"),
+        scene=SceneInfo(platform="test", scene_type=SceneType.DESKTOP, scene_id="desktop"),
         content=Content.from_text("hi"),
     )
 

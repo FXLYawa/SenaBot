@@ -127,7 +127,7 @@ def test_cancellation_propagates(pair):
 
 def test_embedding_config_reuses_loader(monkeypatch):
     monkeypatch.setenv("SENABOT_EMBEDDING_API_KEY", "test-key")
-    path = Path(__file__).resolve().parents[2] / "config" / "embedding.toml"
+    path = Path(__file__).resolve().parents[3] / "config" / "embedding.toml"
     config = load_model_config(path)
     assert config.api_key == "test-key"
     assert config.provider == "openai_compatible"

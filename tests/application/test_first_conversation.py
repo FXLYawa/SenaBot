@@ -3,7 +3,7 @@ import tempfile
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 
-from core.application.bootstrap import SenaBotConfig, SenaBotDependencies, create_senabot_app
+from application import SenaBotConfig, SenaBotDependencies, create_senabot_app
 from core.body import AdapterInboundMessage, BodyOutputItemResult, OperationStatus
 from core.common import Content, SceneType
 from core.data import SQLiteDatabase

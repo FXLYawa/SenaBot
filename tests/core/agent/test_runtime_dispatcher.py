@@ -13,9 +13,14 @@ from core.agent.contracts import (
     AgentRunRequestEventData,
     AgentStepResult,
     FinishEffect,
+    MemoryQueryEffect,
 )
 from core.agent.dispatcher import AgentDispatcher
+from core.agent.deliveries.base import PreparedDelivery
+from core.agent.deliveries.memory import MemoryDelivery, MemoryQueryBinding
 from core.agent.runtime import AgentRuntime
+from core.common import SceneInfo, SceneType, SourceInfo
+from core.memory import MemoryQueryRequest
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,29 +62,22 @@ class RaisingBehavior:
 
 
 class RecordingDelivery:
-    @staticmethod
-    def pending_operation_id(effect: WaitEffect) -> str:
-        return effect.operation_id
+    binding_type = None
 
     @staticmethod
-    def emit(
-        flow: RecordingFlow,
-        effect: WaitEffect,
-    ) -> None:
-        flow.emit("test.effect.requested", effect)
+    def prepare(effect: WaitEffect, binding: None) -> PreparedDelivery:
+        return PreparedDelivery(
+            events=(("test.effect.requested", effect),),
+            pending_operation_id=effect.operation_id,
+        )
 
 
 class ImmediateDelivery:
-    @staticmethod
-    def pending_operation_id(effect: ImmediateEffect) -> None:
-        return None
+    binding_type = None
 
     @staticmethod
-    def emit(
-        flow: RecordingFlow,
-        effect: ImmediateEffect,
-    ) -> None:
-        flow.emit("test.immediate.requested", effect)
+    def prepare(effect: ImmediateEffect, binding: None) -> PreparedDelivery:
+        return PreparedDelivery(events=(("test.immediate.requested", effect),))
 
 
 class RecordingFlow:
@@ -183,6 +181,55 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentDispatcherTests(unittest.IsolatedAsyncioTestCase):
+    async def test_query_uses_run_binding_to_prepare_scoped_request(self) -> None:
+        behavior = SequenceBehavior(
+            AgentStepResult(CounterState(1), (MemoryQueryEffect("咖啡"),))
+        )
+        runtime = AgentRuntime({"test": behavior})
+        dispatcher = AgentDispatcher(runtime, {MemoryQueryEffect: MemoryDelivery("sena")})
+        binding = MemoryQueryBinding(
+            requester=SourceInfo("user_platform_1", "Alice", False, "user_1"),
+            session_id="session_1",
+            scene=SceneInfo("discord", SceneType.GROUP, "group_1", "sena_bot"),
+        )
+        request = AgentRunRequestEventData(
+            run_id="run_1",
+            session_id="session_1",
+            behavior_type="test",
+            behavior_state=CounterState(0),
+            delivery_bindings=(binding,),
+        )
+        flow = RecordingFlow()
+
+        dispatcher.dispatch(flow, await runtime.start(request))
+
+        self.assertEqual(len(flow.emitted), 1)
+        event_type, payload = flow.emitted[0]
+        self.assertEqual(event_type, "memory.query.requested")
+        self.assertIsInstance(payload, MemoryQueryRequest)
+        self.assertEqual(payload.query_text, "咖啡")
+        self.assertEqual(payload.memory_space_id, "sena")
+        self.assertEqual(payload.user_id, "user_1")
+        self.assertEqual(payload.session_id, "session_1")
+        self.assertEqual(payload.group_id, "group_1")
+        self.assertTrue(payload.query_id.startswith("op_memory_query_"))
+
+    async def test_missing_query_binding_fails_without_publishing_request(self) -> None:
+        behavior = SequenceBehavior(
+            AgentStepResult(CounterState(1), (MemoryQueryEffect("咖啡"),))
+        )
+        runtime = AgentRuntime({"test": behavior})
+        dispatcher = AgentDispatcher(runtime, {MemoryQueryEffect: MemoryDelivery("sena")})
+        flow = RecordingFlow()
+
+        dispatcher.dispatch(flow, await runtime.start(_request()))
+
+        self.assertEqual(len(flow.emitted), 1)
+        event_type, failure = flow.emitted[0]
+        self.assertEqual(event_type, "agent.run.failed")
+        self.assertIsInstance(failure, AgentRunFailedEventData)
+        self.assertEqual(failure.code, "delivery_binding_invalid")
+
     async def test_waiting_effect_cannot_be_combined_with_finish(self) -> None:
         behavior = SequenceBehavior(
             AgentStepResult(

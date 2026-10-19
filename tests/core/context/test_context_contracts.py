@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from core.context.contracts import (
@@ -12,16 +13,47 @@ from core.context.contracts import (
     ContextHistoryLevel,
     ContextSnapshot,
     ContextStateChangedEventData,
-    ContextSummary,
     SessionRecord,
 )
-from core.context.common import Content
+from core.common import Content, Summary
+
+
+class SummaryContractTests(unittest.TestCase):
+    def test_required_fields_and_creation_time(self) -> None:
+        values = dict(
+            summary_id="summary_1", session_id="session_1", level=1,
+            first_sequence=1, last_sequence=2, text="",
+            created_at=datetime(2026, 9, 11, tzinfo=UTC),
+        )
+        summary = Summary(**values)
+        for field, value in values.items():
+            self.assertEqual(getattr(summary, field), value)
+            with self.subTest(missing=field):
+                incomplete = dict(values)
+                del incomplete[field]
+                with self.assertRaises(TypeError):
+                    Summary(**incomplete)
+        self.assertEqual(summary.source_summary_ids, ())
+
+    def test_summary_rejects_invalid_ranges_and_hierarchy(self) -> None:
+        summary = Summary("summary_1", "session_1", 1, 1, 2, "摘要", datetime.now(UTC))
+        for changes in (
+            {"summary_id": " "}, {"level": 0}, {"first_sequence": 0},
+            {"last_sequence": 0}, {"source_summary_ids": ("child",)},
+            {"level": 2},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                replace(summary, **changes)
+        parent = replace(summary, summary_id="summary_2", level=2,
+                         source_summary_ids=(summary.summary_id,))
+        self.assertEqual(parent.source_summary_ids, ("summary_1",))
+        self.assertEqual(parent.created_at, summary.created_at)
 
 
 class ContextStateChangedContractTests(unittest.TestCase):
     def test_created_summary_keeps_its_creation_time(self) -> None:
         now = datetime.now(UTC)
-        summary = ContextSummary(
+        summary = Summary(
             summary_id="summary_1",
             session_id="session_1",
             level=1,
@@ -49,8 +81,8 @@ class ContextStateChangedContractTests(unittest.TestCase):
 class ContextHistoryContractTests(unittest.TestCase):
     def test_history_level_rejects_content_from_the_wrong_layer(self) -> None:
         now = datetime.now(UTC)
-        level_one = ContextSummary("summary_1", "session_1", 1, 1, 1, "摘要", now)
-        level_two = ContextSummary(
+        level_one = Summary("summary_1", "session_1", 1, 1, 1, "摘要", now)
+        level_two = Summary(
             "summary_2",
             "session_1",
             2,

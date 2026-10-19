@@ -7,7 +7,7 @@ import unittest
 from collections.abc import Awaitable, Callable
 from unittest.mock import patch
 
-from core.application.bootstrap import (
+from application import (
     SenaBotConfig,
     SenaBotDependencies,
     create_senabot_app,
@@ -31,11 +31,6 @@ from core.model import ModelRequest, ModelResponse
 class StubModelProvider:
     async def generate(self, request: ModelRequest) -> ModelResponse:
         return ModelResponse(text="unused", model="stub")
-
-
-class StubMemoryLLM:
-    async def generate(self, prompt: str) -> str:
-        return "{}"
 
 
 class StubEmbeddingProvider:
@@ -111,13 +106,13 @@ class BodyBootstrapTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "core.application.bootstrap.create_memory_module",
+            "application.bootstrap.create_memory_module",
             return_value=StubModule(),
         ), patch(
-            "core.application.bootstrap.create_context_module",
+            "application.bootstrap.create_context_module",
             return_value=StubModule(),
         ), patch(
-            "core.application.bootstrap.create_agent_module",
+            "application.bootstrap.create_agent_module",
             return_value=StubModule(),
         ):
             app = create_senabot_app(dependencies, config)
