@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from typing import Any
+from time import perf_counter
+from uuid import uuid4
+from infrastructure.logging import get_logger, log_context
+
 
 from openai import (
     APIConnectionError,
@@ -25,6 +29,8 @@ from core.model import (
     ModelUnavailableError,
     ModelUsage,
 )
+
+logger = get_logger(__name__)
 
 
 class OpenAICompatibleEmbeddingProvider:
@@ -98,6 +104,24 @@ class OpenAICompatibleEmbeddingProvider:
         )
 
     async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        with log_context(operation_id=uuid4().hex):
+            started = perf_counter()
+            logger.debug("Embedding request started", extra={
+                "log_kind": "trace", "action": "embedding.request_started",
+                "provider": "openai_compatible", "model": self._model,
+            })
+            result = await self._embed(request)
+            fields = {"log_kind": "trace", "action": "embedding.request_completed",
+                      "provider": "openai_compatible", "model": result.model,
+                      "duration_ms": (perf_counter() - started) * 1000}
+            if result.usage is not None:
+                fields.update({key: getattr(result.usage, key) for key in
+                               ("input_tokens", "output_tokens", "total_tokens")
+                               if getattr(result.usage, key) is not None})
+            logger.info("Embedding request completed", extra=fields)
+            return result
+
+    async def _embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
 
         """发起具体的Embedding请求,并通过_parse_response(response)返回解析后的结果"""
         try:

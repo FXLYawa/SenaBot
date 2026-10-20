@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from time import perf_counter
+from infrastructure.logging import get_logger
+
+
 from core.body.contracts import (
     AdapterInboundMessage,
     BodyInputEventData,
@@ -11,6 +15,8 @@ from core.body.contracts import (
 from core.body.ports import BodyAdapter
 from core.body.runtime import BodyRuntime
 from core.event import EventClient, EventFlow, ModuleEventAPI
+
+logger = get_logger(__name__)
 
 
 class BodyModule:
@@ -63,5 +69,10 @@ class BodyModule:
     async def _handle_output(self, flow: EventFlow) -> None:
         """执行输出请求，并按结果发布完成、部分完成或失败事件。"""
 
+        started = perf_counter()
         result = await self._runtime.handle_output_request(flow.payload)
+        logger.info("Body output finished", extra={
+            "action": "body.output_completed", "status": result.outcome,
+            "result_count": len(result.items), "duration_ms": (perf_counter() - started) * 1000,
+        })
         flow.emit(f"body.output.{result.outcome}", result)

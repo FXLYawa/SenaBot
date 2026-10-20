@@ -1,0 +1,7 @@
+[logging]
+level = "INFO"
+console = true
+file = true
+trace = false
+trace_level = "INFO"
+directory = "logs"

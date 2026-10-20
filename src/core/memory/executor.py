@@ -1,6 +1,8 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import uuid4
+from infrastructure.logging import get_logger
+
 
 from .change_plan import (
     AddMemoryItem,
@@ -18,6 +20,8 @@ from .models import (
     MemoryWriteEnvelope,
 )
 from .protocols import MemoryIndexerProtocol, MemoryRepositoryProtocol
+
+logger = get_logger(__name__)
 
 
 def _new_item_id() -> str:
@@ -95,6 +99,7 @@ class MemoryChangeExecutor:
             # 直接添加正式 MemoryItem。
             if isinstance(operation, AddMemoryItem):
                 added_items.append(await self._execute_add(operation, input_data))
+                self._log_change(input_data, "add", added_items[-1].item_id)
                 continue
 
             # 结束旧 Fact 的有效期。
@@ -105,6 +110,7 @@ class MemoryChangeExecutor:
                         input_data,
                     )
                 )
+                self._log_change(input_data, "end_validity", updated_items[-1].item_id)
                 continue
 
             # 使用新 Understanding 或 Knowledge 替代旧版本,但保留痕迹。
@@ -115,6 +121,8 @@ class MemoryChangeExecutor:
                 )
                 updated_items.append(result.previous_item)
                 added_items.append(result.replacement_item)
+                self._log_change(input_data, "supersede", result.previous_item.item_id,
+                                 result.replacement_item.item_id)
                 continue
 
             raise TypeError(f"unsupported memory change operation: {type(operation)!r}")
@@ -123,6 +131,14 @@ class MemoryChangeExecutor:
             added_items=tuple(added_items),
             updated_items=tuple(updated_items),
         )
+
+    @staticmethod
+    def _log_change(input_data, change_type, memory_id, replacement_id=None):
+        logger.info("Memory change committed", extra={
+            "action": "memory.change_committed", "change_type": change_type,
+            "memory_id": memory_id, "replacement_id": replacement_id,
+            "operation_id": input_data.operation_id, "memory_space_id": input_data.memory_space_id,
+        })
 
     async def _execute_add(
         self,

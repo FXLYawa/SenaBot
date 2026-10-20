@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from time import perf_counter
+from infrastructure.logging import get_logger, log_context
+
+
 import asyncio
 from dataclasses import dataclass, field
 
@@ -17,6 +21,8 @@ from core.event import EventFlow
 from core.memory.contracts import MemoryErrorInfo, MemoryExtractionFailedEventData
 from core.memory.protocols import MemoryExtractionProgressProtocol
 from core.memory.service import MemoryService
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +140,18 @@ class MemoryExtractionFlow:
             ),
         )
         # emit 暂存派生事件，处理器返回后才发布；届时 pending 已记录本次请求。
-        flow.emit("context.read.requested", request)
+        batch_trace_id = new_id("trace")
+        flow.emit("context.read.requested", request, metadata={
+            "log_trace_id": batch_trace_id, "parent_trace_id": flow.envelope.trace.trace_id,
+            "session_id": session_id, "operation_id": request.operation_id,
+        })
+        with log_context(reset=True, trace_id=batch_trace_id,
+                         parent_trace_id=flow.envelope.trace.trace_id,
+                         session_id=session_id, operation_id=request.operation_id):
+            logger.info("Memory extraction scheduled", extra={
+                "log_kind": "trace", "action": "memory.extraction_scheduled",
+                "after_sequence": request.after_sequence, "through_sequence": request.through_sequence,
+            })
         state.pending = request
 
     async def handle_context_read(self, flow: EventFlow) -> None:
@@ -149,6 +166,12 @@ class MemoryExtractionFlow:
         if request.operation_id != result.operation_id:
             return
         state.processing = True
+        started = perf_counter()
+        logger.info("Memory extraction started", extra={
+            "log_kind": "trace", "action": "memory.extraction_started",
+            "operation_id": request.operation_id, "after_sequence": request.after_sequence,
+            "through_sequence": request.through_sequence,
+        })
         try:
             if result.error is not None:
                 self._fail(flow, request, result.error.code, result.error.message)
@@ -180,6 +203,11 @@ class MemoryExtractionFlow:
                 self._config.memory_space_id, request.session_id, request.through_sequence,
             )
             state.processed_through_sequence = request.through_sequence
+            logger.info("Memory extraction progress saved", extra={
+                "action": "memory.extraction_completed", "operation_id": request.operation_id,
+                "session_id": request.session_id, "processed_through_sequence": request.through_sequence,
+                "duration_ms": (perf_counter() - started) * 1000,
+            })
             flow.emit("memory.extraction.completed", extraction)
         except Exception as error:
             self._fail(flow, request, type(error).__name__, "Automatic memory extraction failed.")

@@ -1,6 +1,6 @@
 """兼容 query/documents 与 results/index/relevance_score 协议的重排适配器；只调整顺序，保留向量相似度分数。"""
 
-import logging
+from infrastructure.logging import get_logger
 import math
 
 import httpx
@@ -23,7 +23,7 @@ class MemoryReranker:
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=timeout_seconds, transport=transport,
         )
-        self._logger = logging.getLogger("senabot.memory.reranker")
+        self._logger = get_logger("senabot.memory.reranker")
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -60,8 +60,14 @@ class MemoryReranker:
         # 失败降级,直接退回检索顺序
         except (httpx.HTTPError, ValueError, TypeError, KeyError) as error:
             # 不记录响应正文、凭证或候选记忆；失败不妨碍正常对话。
-            self._logger.warning("Rerank failed (%s); retaining retrieval order", type(error).__name__)
+            self._logger.warning("Rerank failed; retaining retrieval order", extra={
+                "action": "memory.rerank_fallback", "fallback": "retrieval_order",
+                "error_type": type(error).__name__, "result_count": len(candidates),
+            })
             return list(candidates)
+        self._logger.info("Memory reranked", extra={
+            "log_kind": "trace", "action": "memory.reranked", "result_count": len(indices),
+        })
         # 按照下标取回原候选对象
         return [candidates[index] for index in indices]
 

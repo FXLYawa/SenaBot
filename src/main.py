@@ -15,6 +15,13 @@ from application import (
     create_senabot_app,
 )
 from core.data import SQLiteDatabase
+from infrastructure.logging import (
+    LoggingConfig, configure_logging, get_logger, load_logging_config, shutdown_logging,
+)
+from infrastructure.logging.config import LoggingConfigError
+
+logger = get_logger(__name__)
+
 
 
 __all__ = ["main", "run"]
@@ -36,13 +43,41 @@ def main(
 ) -> None:
     """在独立事件循环中运行 SenaBot，并正常处理终端中断"""
 
+    configure_logging(LoggingConfig(file=False))
     try:
+        configure_logging(_load_logging_config())
         asyncio.run(run(dependencies, config))
     except KeyboardInterrupt:
         pass
+    finally:
+        shutdown_logging()
 
 
 async def run_from_config() -> None:
+    """日志出口早于配置和资源初始化，晚于应用与客户端清理关闭。"""
+    configure_logging(LoggingConfig(file=False))
+    try:
+        logging_config = _load_logging_config()
+        configure_logging(logging_config)
+        logger.info("Application starting", extra={"action": "application.starting"})
+        await _run_from_config()
+    finally:
+        logger.info("Application lifecycle ended", extra={"action": "application.stopped"})
+        shutdown_logging()
+
+
+def _load_logging_config():
+    try:
+        return load_logging_config()
+    except LoggingConfigError as error:
+        # 配置模块的受控错误只包含字段名/规则，不包含配置原文或凭据。
+        logger.error("Logging configuration invalid: %s", str(error), extra={
+            "action": "application.logging_config_invalid",
+        })
+        raise
+
+
+async def _run_from_config() -> None:
     """读取项目配置，创建模型依赖，并在退出时释放客户端。"""
 
     project_root = Path(__file__).resolve().parent.parent

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from infrastructure.logging import get_logger
+
+
 from core.context.compression import CompactionRequestData, ContextCompressor
 from core.context.contracts import (
     ContextSnapshot,
@@ -10,6 +13,8 @@ from core.context.contracts import (
 from core.context.store import ContextStateStore
 from core.context.window import ContextWindowPolicy
 from core.event import EventFlow
+
+logger = get_logger(__name__)
 
 
 class CompactionFlow:
@@ -69,6 +74,10 @@ class CompactionFlow:
             self._scheduled.discard(request.session_id)
         if result is None:
             return
+        logger.info("Context compacted", extra={
+            "action": "context.compacted", "session_id": request.session_id,
+            "entry_count": len(result.snapshot.entries), "summary_count": len(result.snapshot.summaries),
+        })
         flow.emit(
             "context.state.changed",
             ContextStateChangedEventData.from_snapshot(

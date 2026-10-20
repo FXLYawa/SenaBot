@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from infrastructure.logging import get_logger
+
+
 import asyncio
 from collections.abc import AsyncGenerator, Mapping, Sequence, Set
 from contextlib import asynccontextmanager
@@ -19,6 +22,8 @@ from core.agent.contracts import (
     FailEffect,
     PendingOperation,
 )
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +89,10 @@ class AgentRuntime:
             delivery_bindings=request.delivery_bindings,
         )
         self._runs[run.run_id] = run
+        logger.debug("Agent run started", extra={
+            "log_kind": "trace", "action": "agent.run_started", "run_id": run.run_id,
+            "session_id": run.session_id, "behavior_type": run.behavior_type,
+        })
         lock = self._run_locks[run.run_id] = asyncio.Lock()
         try:
             async with lock:
