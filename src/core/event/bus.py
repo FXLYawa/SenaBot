@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import logging
+from infrastructure.logging import get_logger, log_context
 from collections.abc import Mapping
 from enum import Enum, auto
+from time import perf_counter
+
+from core.event.observation import event_log_fields
+
 
 from core.common import new_id, utc_now
 from core.event.contracts import EventSpec, HandlerSpec
@@ -12,6 +16,8 @@ from core.event.errors import EventError
 from core.event.flow import EventFlow
 from core.event.protocols import EventHandler, Logger
 from core.event.registry import EventRegistry, HandlerRegistration, RegistrationToken
+
+_observer = get_logger(__name__)
 
 class _BusState(Enum):
     """EventBus 内部生命周期; DRAINING 关闭入口但继续处理现有事件"""
@@ -38,7 +44,7 @@ class EventBus:
         logger: Logger | None = None
     ) -> None:
         self.registry = registry or EventRegistry()
-        self.logger = logger or logging.getLogger("senabot.event")
+        self.logger = logger or get_logger("senabot.event")
         self.dispatch_concurrency = dispatch_concurrency
         self.default_handler_timeout = default_handler_timeout
         self.flow_control_timeout = flow_control_timeout
@@ -104,6 +110,8 @@ class EventBus:
             )
         self._validate_envelope(envelope)
         self._queue.put_nowait(envelope)
+        with log_context(reset=True, **event_log_fields(envelope)):
+            _observer.info("Event published", extra={"log_kind": "trace", "action": "event.published"})
     
     
     async def unregister_owner(self, owner_id: str) -> None:
@@ -145,9 +153,12 @@ class EventBus:
         while True:
             envelope = await self._queue.get()
             try:
-                await self._dispatch_one(envelope)
-            except Exception as e:
-                self.logger.exception("Error dispatching event: %s", e)
+                with log_context(reset=True, **event_log_fields(envelope)):
+                    try:
+                        _observer.info("Event dispatch", extra={"log_kind": "trace", "action": "event.dispatch"})
+                        await self._dispatch_one(envelope)
+                    except Exception:
+                        self.logger.exception("Error dispatching event")
             finally:
                 self._queue.task_done()
     
@@ -219,9 +230,23 @@ class EventBus:
         """将事件列表加入队列"""
         for envelope in envelopes:
             self._queue.put_nowait(envelope)
+            with log_context(reset=True, **event_log_fields(envelope)):
+                _observer.info("Event published", extra={"log_kind": "trace", "action": "event.published"})
     
     
     async def _invoke(
+        self,
+        registration: HandlerRegistration,
+        envelope: EventEnvelope,
+        event_spec: EventSpec,
+    ) -> tuple[EventEnvelope, bool, tuple[EventEnvelope, ...]] | None:
+        # 队列 worker 不继承生产者上下文；控制型 Handler 也需要独立重绑定。
+        with log_context(reset=True, **event_log_fields(envelope),
+                         handler_id=registration.spec.handler_id,
+                         owner_id=registration.spec.owner_id):
+            return await self._invoke_attempts(registration, envelope, event_spec)
+
+    async def _invoke_attempts(
         self,
         registration: HandlerRegistration,
         envelope: EventEnvelope,
@@ -241,10 +266,18 @@ class EventBus:
             # 失败的 Flow 已经结束，重试必须从原始信封创建全新的暂存区。
             flow = self._new_flow(envelope, registration, event_spec)
             try:
-                return await asyncio.wait_for(
-                    self._invoke_and_commit(registration, flow),
-                    timeout=timeout,
-                )
+                with log_context(attempt=attempt):
+                    started = perf_counter()
+                    _observer.info("Handler started", extra={"log_kind": "trace", "action": "event.handler_started"})
+                    committed = await asyncio.wait_for(
+                        self._invoke_and_commit(registration, flow),
+                        timeout=timeout,
+                    )
+                    _observer.info("Handler committed", extra={
+                        "log_kind": "trace", "action": "event.handler_completed",
+                        "duration_ms": (perf_counter() - started) * 1000,
+                    })
+                    return committed
             except TimeoutError:
                 self.logger.warning(
                     "Event handler timed out after %.1f seconds: %s "
@@ -263,12 +296,11 @@ class EventBus:
                 raise
             except Exception as exc:
                 self.logger.exception(
-                    "Error in event handler %s (owner=%s, attempt=%d/%d): %s",
+                    "Error in event handler %s (owner=%s, attempt=%d/%d)",
                     registration.spec.handler_id,
                     registration.spec.owner_id,
                     attempt,
                     max_attempts,
-                    exc,
                 )
             flow._discard()
         return None

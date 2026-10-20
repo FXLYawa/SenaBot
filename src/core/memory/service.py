@@ -1,5 +1,8 @@
 from core.common import utc_now
 import math
+from time import perf_counter
+from infrastructure.logging import get_logger, log_context
+
 from dataclasses import dataclass, replace
 
 from core.context import ContextReadView
@@ -38,6 +41,8 @@ from .protocols import (
     MemoryReviewerProtocol,
     MemorySpaceRouterProtocol,
 )
+
+logger = get_logger(__name__)
 
 
 def _build_query_recall_context(
@@ -104,7 +109,13 @@ class MemoryService:
     ) -> MemoryQueryResult:
         """执行向量化、检索和重排，返回最终记忆列表。"""
 
-        # 向量化输入
+        with log_context(session_id=request.session_id, user_id=request.user_id,
+                         operation_id=request.query_id, memory_space_id=request.memory_space_id):
+            return await self._query(request)
+
+    async def _query(self, request: MemoryQueryRequest) -> MemoryQueryResult:
+        started = perf_counter()
+        logger.debug("Memory query started", extra={"log_kind": "trace", "action": "memory.query_started"})
         query_embedding = await self.embedder.embed(request.query_text)
 
         # 得到允许召回的边界
@@ -117,6 +128,9 @@ class MemoryService:
             context=query_context,
         )
 
+        logger.debug("Memory recalled", extra={
+            "log_kind": "trace", "action": "memory.recalled", "candidate_count": len(candidates),
+        })
         # 进行精度更高的重排序,得到最终结果
         if self.reranker is not None:
             candidates = await self.reranker.rerank(
@@ -131,6 +145,10 @@ class MemoryService:
 
         memories = [candidate.memory for candidate in candidates]
 
+        logger.info("Memory query completed", extra={
+            "log_kind": "trace", "action": "memory.query_completed", "result_count": len(memories),
+            "duration_ms": (perf_counter() - started) * 1000,
+        })
         # 返回最终查询结果
         return MemoryQueryResult(
             query_id=request.query_id,
@@ -229,6 +247,10 @@ class MemoryService:
                 recent_messages=to_extraction_messages(context.preceding_entries),
             ),
         )
+        logger.info("Memory candidates extracted", extra={
+            "log_kind": "trace", "action": "memory.candidates_extracted", "candidate_count": len(candidates),
+            "operation_id": operation_id, "memory_space_id": memory_space_id,
+        })
         # 根据候选引用的消息 ID 查回目标条目，为每个候选构造对应的条目和事件来源。
         entries_by_id = {entry.entry_id: entry for entry in context.entries}
         candidates = [

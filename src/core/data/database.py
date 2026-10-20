@@ -5,12 +5,18 @@
 
 from __future__ import annotations
 
+from time import perf_counter
+from infrastructure.logging import get_logger
+
+
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 import sqlite_vec
+
+logger = get_logger(__name__)
 
 
 class SQLiteDatabase:
@@ -42,6 +48,7 @@ class SQLiteDatabase:
                 self.connection.enable_load_extension(False)
             # 检查数据库版本,必要时建表
             self._migrate()
+            logger.info("Database initialized", extra={"action": "data.initialized"})
         except BaseException:
             self.connection.close()
             raise
@@ -111,6 +118,7 @@ class SQLiteDatabase:
             raise RuntimeError("nested transactions are not supported")
 
         # IMMEDIATE表明事务开始时就拿到写锁
+        started = perf_counter()
         self.connection.execute("BEGIN IMMEDIATE")
         try:
             # 暂时把执行权交给transaction里面的代码
@@ -121,6 +129,12 @@ class SQLiteDatabase:
             # 如果出现错误则回滚
             self.connection.rollback()
             raise
+        finally:
+            duration_ms = (perf_counter() - started) * 1000
+            if duration_ms >= 100:
+                logger.warning("Slow database transaction", extra={
+                    "action": "data.slow_operation", "operation": "transaction", "duration_ms": duration_ms,
+                })
 
     def close(self) -> None:
         self.connection.close()

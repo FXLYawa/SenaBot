@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import logging
+from infrastructure.logging import get_logger
 from collections.abc import Awaitable, Callable
 from typing import ClassVar
 
@@ -41,7 +41,7 @@ class BaseAdapter:
         self.connector = connector
         self.codec = codec
         self.publish_input = publish_input
-        self.logger = logging.getLogger("senabot.adapter")
+        self.logger = get_logger("senabot.adapter")
         self._run_task: asyncio.Task[None] | None = None
         self._stop_task: asyncio.Task[None] | None = None
         self._stopped = False
@@ -62,6 +62,9 @@ class BaseAdapter:
             self._run_connector(),
             name=f"senabot-adapter:{self.adapter_type}:{self.platform}",
         )
+        self.logger.info("Adapter service started", extra={
+            "action": "adapter.started", "adapter_type": self.adapter_type, "platform": self.platform,
+        })
 
     async def stop(self) -> None:
         """先关闭传输入口，再等待运行任务退出，必要时取消任务。"""
@@ -87,7 +90,7 @@ class BaseAdapter:
         try:
             payloads = self.codec.encode(outbound)
         except Exception as exc:
-            self.logger.exception("Adapter failed to encode outbound message: %s", exc)
+            self.logger.exception("Adapter failed to encode outbound message")
             # 现有 Body 契约无法表达 adapter-level failure；该项不对应 wire item。
             return [BodyOutputItemResult(index=0, status=OperationStatus.FAILED)]
 
@@ -97,7 +100,7 @@ class BaseAdapter:
                 await self.connector.send(raw)
             except Exception as exc:
                 self.logger.exception(
-                    "Adapter failed to send outbound item %d: %s", index, exc
+                    "Adapter failed to send outbound item %d", index
                 )
                 results.append(
                     BodyOutputItemResult(index=index, status=OperationStatus.FAILED)
@@ -117,7 +120,7 @@ class BaseAdapter:
         try:
             message = self.codec.decode(raw)
         except CodecError as exc:
-            self.logger.warning("Adapter skipped invalid inbound message: %s", exc)
+            self.logger.warning("Adapter skipped invalid inbound message")
             return
 
         message.adapter_type = self.adapter_type
@@ -125,12 +128,12 @@ class BaseAdapter:
         try:
             self._complete_inbound_message(message)
         except Exception as exc:
-            self.logger.exception("Adapter failed to complete inbound message: %s", exc)
+            self.logger.exception("Adapter failed to complete inbound message")
             return
         try:
             await self.publish_input(message)
         except Exception as exc:
-            self.logger.exception("Adapter failed to publish inbound message: %s", exc)
+            self.logger.exception("Adapter failed to publish inbound message")
 
     def _complete_inbound_message(self, message: AdapterInboundMessage) -> None:
         """供具体 Adapter 在发布前补齐平台特有的可信字段。"""
@@ -142,14 +145,14 @@ class BaseAdapter:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            self.logger.exception("Adapter connector service failed: %s", exc)
+            self.logger.exception("Adapter connector service failed")
 
     async def _stop(self) -> None:
         """执行一次关闭流程。"""
         try:
             await self.connector.close()
         except Exception as exc:
-            self.logger.exception("Adapter connector close failed: %s", exc)
+            self.logger.exception("Adapter connector close failed")
 
         run_task = self._run_task
         if run_task is None:
@@ -164,3 +167,6 @@ class BaseAdapter:
             await asyncio.gather(run_task, return_exceptions=True)
         self._run_task = None
         self._stopped = True
+        self.logger.info("Adapter service stopped", extra={
+            "action": "adapter.stopped", "adapter_type": self.adapter_type, "platform": self.platform,
+        })

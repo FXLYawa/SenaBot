@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from typing import Any
+from time import perf_counter
+from uuid import uuid4
+from infrastructure.logging import get_logger, log_context
+
 
 from openai import (
     APIConnectionError,
@@ -25,6 +29,8 @@ from core.model import (
     ModelUnavailableError,
     ModelUsage,
 )
+
+logger = get_logger(__name__)
 
 
 class OpenAICompatibleProvider:
@@ -99,6 +105,24 @@ class OpenAICompatibleProvider:
         )
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
+        with log_context(operation_id=uuid4().hex):
+            started = perf_counter()
+            logger.debug("Model request started", extra={
+                "log_kind": "trace", "action": "model.request_started",
+                "provider": "openai_compatible", "model": self._model,
+            })
+            result = await self._generate(request)
+            fields = {"log_kind": "trace", "action": "model.request_completed",
+                      "provider": "openai_compatible", "model": result.model,
+                      "duration_ms": (perf_counter() - started) * 1000}
+            if result.usage is not None:
+                fields.update({key: getattr(result.usage, key) for key in
+                               ("input_tokens", "output_tokens", "total_tokens")
+                               if getattr(result.usage, key) is not None})
+            logger.info("Model request completed", extra=fields)
+            return result
+
+    async def _generate(self, request: ModelRequest) -> ModelResponse:
 
         """发起模型调用"""
         try:

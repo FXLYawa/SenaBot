@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+from infrastructure.logging import get_logger, log_context
 from dataclasses import dataclass
 from typing import cast
 
@@ -26,6 +26,7 @@ from core.context.identity import conversation_session_id
 from core.context.state import AppendResult
 from core.context.store import ContextStateStore
 from core.event import EventClient, EventEnvelope, EventFlow
+from core.event.observation import event_log_fields
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +59,7 @@ class ConversationFlow:
         self._events = events # 用于在当前事件链上发布追加和准备事件
         # Session 是恢复槽位；同一 Session 只发起一个 I/O，请求期间的输入按到达顺序排队。
         self._restoring: dict[str, _PendingRestore] = {} # session_id -> _PendingRestore
-        self._logger = logging.getLogger("senabot.context")
+        self._logger = get_logger("senabot.context")
 
     async def handle_input(self, flow: EventFlow) -> None:
         """解析输入所属 Session; 未加载时先请求 Data 冷恢复"""
@@ -66,6 +67,10 @@ class ConversationFlow:
         # 解析输入所属的 Conversation Session
         payload: BodyInputEventData = flow.payload
         session_id = conversation_session_id(payload.scene)
+        self._logger.info("Body input received", extra={
+            "log_kind": "trace", "action": "body.input_received", "session_id": session_id,
+            "platform": payload.scene.platform, "message_length": len(payload.content.text_value()),
+        })
         if self._store.is_loaded(session_id):
             # Session 已加载，直接追加输入并发布 Agent 工作窗口
             self._accept(flow, payload, session_id)
@@ -141,11 +146,12 @@ class ConversationFlow:
         rejected: list[tuple[_PendingInput, ContextErrorInfo]] = []
         for item in pending.inputs:
             try:
-                appended, prepared = self._append_input(
-                    item.payload,
-                    item.parent.event_id,
-                    session_id,
-                )
+                with log_context(reset=True, **event_log_fields(item.parent)):
+                    appended, prepared = self._append_input(
+                        item.payload,
+                        item.parent.event_id,
+                        session_id,
+                    )
             except LookupError as exc:
                 rejected.append(
                     (
@@ -217,6 +223,11 @@ class ConversationFlow:
             ),
         )
         trigger = result.entries[0]
+        self._logger.debug("Context prepared", extra={
+            "log_kind": "trace", "action": "context.prepared", "session_id": session_id,
+            "event_id": source_event_id, "entry_count": len(result.snapshot.entries),
+            "summary_count": len(result.snapshot.summaries),
+        })
         return result, ContextPreparedEventData(
             session_id=session_id,
             trigger_event_id=source_event_id,
@@ -275,7 +286,7 @@ class ConversationFlow:
         )
 
     def _log_failure(self, session_id: str, error: ContextErrorInfo) -> None:
-        # 记录失败事实，便于追踪和排查问题, 后续应该要换成依赖EventBus的日志系统
+        # 日志独立于 EventBus；失败事件的统一归属另行迁移。
         self._logger.error(
             "Context input rejected: session=%s code=%s",
             session_id,

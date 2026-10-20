@@ -5,6 +5,9 @@
 
 from __future__ import annotations
 
+from infrastructure.logging import get_logger
+
+
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -21,6 +24,8 @@ from core.agent.contracts import (
 from core.agent.deliveries import EffectDelivery, PreparedDelivery
 from core.agent.runtime import AgentRuntime, AgentTransition
 from core.event import EventFlow
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +106,10 @@ class AgentDispatcher:
         events: list[tuple[str, object]] = []
         pending_operations: list[PendingOperation] = []
         for effect in external_effects:
+            logger.debug("Agent effect routed", extra={
+                "log_kind": "trace", "action": "agent.effect_routed", "run_id": run.run_id,
+                "effect_type": type(effect).__name__, "session_id": run.session_id,
+            })
             prepared = self._prepare_delivery(effect, run.delivery_bindings)
             if isinstance(prepared, FailEffect):
                 return prepared
@@ -199,6 +208,10 @@ class AgentDispatcher:
                 ),
             )
             return
+        logger.info("Agent run completed", extra={
+            "action": "agent.run_completed", "run_id": run.run_id,
+            "session_id": run.session_id, "outcome": transition.outcome or "completed",
+        })
         flow.emit(
             "agent.run.completed",
             AgentRunCompletedEventData(
